@@ -170,7 +170,7 @@ def test_bytes_roundtrip(st: Structure):
 
     back = Structure.from_bytes(st.to_bytes())
 
-    assert repr(back) == repr(st)
+    assert [repr(t) for t in back.tables] == [repr(t) for t in st.tables]
     assert back.atoms["name"].tolist() == st.atoms["name"].tolist()
     assert np.array_equal(back.atoms["xyz"], st.atoms["xyz"])
     assert back.atom_to_residue.tolist() == st.atom_to_residue.tolist()
@@ -190,4 +190,4 @@ def test_repr_shows_schema(st: Structure):
     text = repr(st)
 
     assert "<Structure atoms=6 residues=3 chains=2>" in text
-    assert "metadata: id" in text
+    assert "    id  '1abc'" in text

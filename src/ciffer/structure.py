@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
 
 FORMAT_VERSION = 1
+REPR_WIDTH = 88
 
 
 class Structure:
@@ -200,10 +201,17 @@ class Structure:
         lines = [f"<Structure {counts}>"]
 
         for name, table in tables:
-            lines.append(name)
-            lines.extend(repr(table).splitlines()[1:])  # the schema, without header
+            lines.append(f"  {name}")
+            schema = repr(table).splitlines()[1:]  # without the header
+            lines.extend(f"  {line}" for line in schema)
 
-        lines.append(f"metadata: {', '.join(self.metadata) or '-'}")
+        lines.append("  metadata")
+        width = max((len(key) for key in self.metadata), default=0)
+        for key, value in self.metadata.items():
+            line = f"    {key:<{width}}  {value!r}"
+            if len(line) > REPR_WIDTH:
+                line = line[: REPR_WIDTH - 3] + "..."
+            lines.append(line)
         return "\n".join(lines)
 
 
