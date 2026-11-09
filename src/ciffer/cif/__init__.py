@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal, overload
 import gemmi
 import numpy as np
 
+from .altloc import conformer_rows
 from .category import Category, from_categories
 
 if TYPE_CHECKING:
@@ -17,6 +18,7 @@ def read(
     path: str | os.PathLike[str],
     *,
     model: int | None = None,
+    altloc: Literal["occupancy", "all"] | None = None,
 ) -> Structure: ...
 
 
@@ -25,6 +27,7 @@ def read(
     path: str | os.PathLike[str],
     *,
     model: list[int] | Literal["all"],
+    altloc: Literal["occupancy", "all"] | None = None,
 ) -> list[Structure]: ...
 
 
@@ -32,6 +35,7 @@ def read(
     path: str | os.PathLike[str],
     *,
     model: int | list[int] | Literal["all"] | None = None,
+    altloc: Literal["occupancy", "all"] | None = None,
 ) -> Structure | list[Structure]:
     """Read an mmCIF file.
 
@@ -42,6 +46,10 @@ def read(
     model: int | list[int] | Literal["all"] | None, optional
         Model number to read, or a list of them. None reads the first model, and
         ``"all"`` reads every model.
+    altloc: Literal["occupancy", "all"] | None, optional
+        None keeps the first conformer as gemmi does. ``"occupancy"`` keeps, at each
+        residue position, the altloc with the highest total occupancy as biotite does.
+        ``"all"`` keeps every alternative location.
 
     Returns
     -------
@@ -55,8 +63,14 @@ def read(
         st = ciffer.read("1abc.cif.gz")
         pair = ciffer.read("2k9q.cif", model=[1, 3])
         ensemble = ciffer.read("2k9q.cif", model="all")
+        likely = ciffer.read("1ejg.cif", altloc="occupancy")
+        every = ciffer.read("1ejg.cif", altloc="all")
 
     """
+    if altloc not in (None, "occupancy", "all"):
+        msg = f"altloc must be None, 'occupancy', or 'all', got {altloc!r}."
+        raise ValueError(msg)
+
     block = gemmi.cif.read(os.fspath(path)).sole_block()
     site = Category(block, "_atom_site.")
     entity = Category(block, "_entity.")
@@ -84,8 +98,9 @@ def read(
 
     structures = []
     for number in chosen:
-        rows = np.flatnonzero(numbers == number)
-        st = from_categories(site.take(rows), entity, entity_poly, chem_comp, scheme)
+        model_site = site.take(np.flatnonzero(numbers == number))
+        model_site = model_site.take(conformer_rows(model_site, altloc))
+        st = from_categories(model_site, entity, entity_poly, chem_comp, scheme)
         st.metadata["model"] = number
         structures.append(st)
 

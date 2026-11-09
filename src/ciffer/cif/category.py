@@ -138,19 +138,56 @@ def from_categories(
     # name splits two residue types at one position (microheterogeneity).
     keys = ["label_asym_id", "label_seq_id", "auth_seq_id", "ins_code", "name"]
     rows = {name: np.concatenate([listed[name], per_atom[name]]) for name in per_atom}
+    from_atoms = np.arange(len(rows["name"])) >= len(scheme)
 
-    first, group = _group_rows(*(rows[key] for key in keys))
+    keep = _one_type_per_position(
+        rows["label_asym_id"], rows["label_seq_id"], rows["name"], from_atoms
+    )
+    rows = {name: values[keep] for name, values in rows.items()}
+
+    first, group = group_rows(*(rows[key] for key in keys))
     residues = {name: values[first] for name, values in rows.items()}
 
-    first, residue_to_chain = _group_rows(residues["label_asym_id"])
+    first, residue_to_chain = group_rows(residues["label_asym_id"])
     chains = {name: values[first] for name, values in residues.items()}
 
     return Structure(
         atoms=Table(_atom_table(site)),
         residues=Table(_residue_table(residues, chem_comp)),
         chains=Table(_chain_table(chains, entity, entity_poly)),
-        atom_to_residue=group[len(scheme) :],
+        atom_to_residue=group[from_atoms[keep]],
         residue_to_chain=residue_to_chain,
+    )
+
+
+def _one_type_per_position(
+    asym: NDArray[np.str_],
+    seq: NDArray[np.str_],
+    name: NDArray[np.str_],
+    from_atoms: NDArray[np.bool_],
+) -> NDArray[np.bool_]:
+    """Return which rows to keep where the sequence lists several residue types.
+
+    One position can hold several residue types (microheterogeneity). The types with
+    atoms are kept, and a position without atoms keeps its first listed type.
+
+    Examples
+    --------
+    >>> asym = np.array(["A", "A", "A", "A", "A"])
+    >>> seq = np.array(["22", "22", "23", "23", "22"])
+    >>> name = np.array(["PRO", "SER", "ALA", "GLY", "PRO"])
+    >>> from_atoms = np.array([False, False, False, False, True])
+    >>> _one_type_per_position(asym, seq, name, from_atoms)
+    array([ True, False,  True, False,  True])
+
+    """
+    first, position = group_rows(asym, seq)
+    _, kind = group_rows(asym, seq, name)
+    observed = np.isin(position, position[from_atoms])
+    return np.where(
+        observed,
+        np.isin(kind, kind[from_atoms]),
+        kind == kind[first][position],
     )
 
 
@@ -201,7 +238,7 @@ def _atom_table(site: Category) -> dict[str, NDArray]:
     }
 
 
-def _group_rows(*columns: NDArray) -> tuple[NDArray[np.intp], NDArray[np.intp]]:
+def group_rows(*columns: NDArray) -> tuple[NDArray[np.intp], NDArray[np.intp]]:
     """Group rows that are equal in every column.
 
     Returns the first row of each group and the group of each row, numbered by first
@@ -211,7 +248,7 @@ def _group_rows(*columns: NDArray) -> tuple[NDArray[np.intp], NDArray[np.intp]]:
     --------
     >>> chain = np.array(["A", "A", "A", "B"])
     >>> seq = np.array(["1", "1", "2", "1"])
-    >>> _group_rows(chain, seq)
+    >>> group_rows(chain, seq)
     (array([0, 2, 3]), array([0, 0, 1, 2]))
 
     """

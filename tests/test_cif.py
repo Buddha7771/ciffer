@@ -13,6 +13,7 @@ DATA = Path(__file__).parent / "data"
 
 def gemmi_atoms(path: Path, model: int = 1) -> list:
     st = gemmi.read_structure(str(path))
+    st.remove_alternative_conformations()
     model_ = next(m for m in st if m.num == model)
     return sorted(
         (
@@ -50,6 +51,7 @@ def ciffer_atoms(st: Structure) -> list:
     [
         ("1STP.cif.gz", {}),
         ("1L2Y_3models.cif.gz", {"model": 2}),
+        ("1EJG.cif.gz", {}),
     ],
 )
 def test_read_matches_gemmi(name: str, options: dict[str, Any]):
@@ -68,6 +70,42 @@ def test_read_adds_unobserved_residues():
     gemmi_st = gemmi.read_structure(str(DATA / "1STP.cif.gz"))
     gemmi_st.setup_entities()
     assert polymer["name"].tolist() == gemmi_st.entities[0].full_sequence
+
+
+def test_read_altloc():
+    one = ciffer.read(DATA / "1EJG.cif.gz")
+    every = ciffer.read(DATA / "1EJG.cif.gz", altloc="all")
+
+    # Positions 22 and 25 hold two residue types; one is kept by default.
+    polymer = one.residues[one.residue_to_chain == 0]
+    assert polymer["label_seq_id"].tolist() == list(range(1, 47))
+    at_22 = every.residues["label_seq_id"] == 22
+    assert every.residues["name"][at_22].tolist() == ["PRO", "SER"]
+    assert len(every.atoms) == 843  # every row of atom_site
+
+    # Asn 12 has more occupancy in B, though A comes first in the file.
+    likely = ciffer.read(DATA / "1EJG.cif.gz", altloc="occupancy")
+    for st, letter in [(one, "A"), (likely, "B")]:
+        at_12 = st.residues["label_seq_id"][st.atom_to_residue] == 12
+        assert set(st.atoms["altloc"][at_12].tolist()) - {""} == {letter}
+    at_22 = likely.residues["label_seq_id"] == 22
+    assert likely.residues["name"][at_22].tolist() == ["PRO"]  # 0.57 against 0.43
+
+
+def test_read_keeps_first_type_without_atoms(tmp_path: Path):
+    doc = gemmi.cif.read(str(DATA / "1EJG.cif.gz"))
+    table = doc.sole_block().find_mmcif_category("_atom_site.")
+    seq = table.find_column("label_seq_id")
+    for row in reversed(range(len(table))):
+        if seq[row] == "22":
+            table.remove_row(row)
+    path = tmp_path / "1EJG.cif"
+    doc.write_file(str(path))
+
+    st = ciffer.read(path, altloc="all")
+
+    at_22 = st.residues["label_seq_id"] == 22
+    assert st.residues["name"][at_22].tolist() == ["PRO"]  # the first listed type
 
 
 def test_read_all_models():
@@ -116,6 +154,13 @@ def test_read_without_optional_items(tmp_path: Path):
     assert (st.atoms["charge"] == 0).all()
 
 
-def test_missing_model_raises():
-    with pytest.raises(ValueError, match="models are"):
-        ciffer.read(DATA / "1STP.cif.gz", model=9)
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"model": 9}, "models are"),
+        ({"altloc": "A"}, "altloc must be"),
+    ],
+)
+def test_bad_options_raise(options: dict[str, Any], message: str):
+    with pytest.raises(ValueError, match=message):
+        ciffer.read(DATA / "1STP.cif.gz", **options)
