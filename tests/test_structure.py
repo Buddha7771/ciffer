@@ -191,3 +191,9 @@ def test_repr_shows_schema(st: Structure):
 
     assert "<Structure atoms=6 residues=3 chains=2>" in text
     assert "    id  '1abc'" in text
+
+
+def test_view_repr_shows_columns(st: Structure):
+    assert repr(st.atoms).startswith("<View atoms=6>\n  name")
+    assert repr(st.atoms[:2]).startswith("<View atoms=2 of 6>")
+    assert "edges" not in repr(st.atoms)

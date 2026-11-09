@@ -169,18 +169,12 @@ class Table:
 
     def __repr__(self) -> str:
         """Return the number of rows and the schema."""
-
-        def _describe(column: NDArray[Any]) -> str:
-            if column.ndim == 1:
-                return str(column.dtype)
-            return f"{column.dtype} {column.shape[1:]}"
-
-        width = max((len(name) for name in self.columns), default=0)
-        lines = [f"  {name:<{width}}  {_describe(self[name])}" for name in self.columns]
-
+        lines = _schema({name: self[name] for name in self.columns})
+        if self.edges:
+            lines.append("  edges")
         for name, edges in self.edges.items():
-            fields = "".join(f", {c} {_describe(edges[c])}" for c in edges.columns)
-            lines.append(f"  edges {name} ({len(edges)} rows{fields})")
+            lines.append(f"    {name}  {len(edges)} edges")
+            lines.extend(f"    {line}" for line in repr(edges).splitlines()[1:])
 
         header = f"<{self.__class__.__name__} rows={len(self)}>"
         return "\n".join([header, *lines])
@@ -266,8 +260,9 @@ class EdgeList:
         del self._values[name]
 
     def __repr__(self) -> str:
-        """Return the number of edges and the value column names."""
-        return f"<EdgeList rows={len(self)} columns={self.columns}>"
+        """Return the number of edges and the schema of the value columns."""
+        lines = _schema({name: self[name] for name in self.columns})
+        return "\n".join([f"<EdgeList edges={len(self)}>", *lines])
 
     def _check_length(self, name: str, array: NDArray[Any]) -> NDArray[Any]:
         if len(array) != len(self):
@@ -286,3 +281,13 @@ def as_indices(value: ArrayLike) -> NDArray[np.intp]:
         msg = f"Expected 1-D integer indices, got {index.ndim}-D {index.dtype}."
         raise TypeError(msg)
     return index.astype(np.intp, copy=False)
+
+
+def _schema(columns: Mapping[str, NDArray[Any]]) -> list[str]:
+    """Return one line per column with its dtype, and its shape after the first axis."""
+    width = max((len(name) for name in columns), default=0)
+    lines = []
+    for name, column in columns.items():
+        shape = f" {column.shape[1:]}" if column.ndim > 1 else ""
+        lines.append(f"  {name:<{width}}  {column.dtype}{shape}")
+    return lines
