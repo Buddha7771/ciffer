@@ -66,6 +66,12 @@ def test_read_all_models():
     assert np.array_equal(models[1].atoms["xyz"], second.atoms["xyz"])
 
 
+def test_read_model_list():
+    models = ciffer.read(DATA / "1L2Y_3models.cif.gz", model=[3, 1])
+
+    assert [st.metadata["model"] for st in models] == [3, 1]
+
+
 def test_read_types():
     st = ciffer.read(DATA / "1STP.cif.gz")
 

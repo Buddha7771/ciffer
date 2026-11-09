@@ -24,14 +24,14 @@ def read(
 def read(
     path: str | os.PathLike[str],
     *,
-    model: Literal["all"],
+    model: list[int] | Literal["all"],
 ) -> list[Structure]: ...
 
 
 def read(
     path: str | os.PathLike[str],
     *,
-    model: int | Literal["all"] | None = None,
+    model: int | list[int] | Literal["all"] | None = None,
 ) -> Structure | list[Structure]:
     """Read an mmCIF file.
 
@@ -39,20 +39,21 @@ def read(
     ----------
     path: str | os.PathLike[str]
         An mmCIF file, optionally gzipped.
-    model: int | Literal["all"] | None, optional
-        Model number to read. None reads the first model.
-        ``"all"`` returns a list with one structure per model.
+    model: int | list[int] | Literal["all"] | None, optional
+        Model number to read, or a list of them. None reads the first model, and
+        ``"all"`` reads every model.
 
     Returns
     -------
     Structure | list[Structure]
-        A list only when ``model="all"``.
+        A list, in the given order, when ``model`` is a list or ``"all"``.
 
     Examples
     --------
     .. code-block:: python
 
         st = ciffer.read("1abc.cif.gz")
+        pair = ciffer.read("2k9q.cif", model=[1, 3])
         ensemble = ciffer.read("2k9q.cif", model="all")
 
     """
@@ -71,10 +72,13 @@ def read(
         chosen = models[:1]
     elif model == "all":
         chosen = models
-    elif model in models:
+    elif isinstance(model, int):
         chosen = [model]
     else:
-        msg = f"Model {model!r} is not in the file; models are {models}."
+        chosen = model
+    missing = [number for number in chosen if number not in models]
+    if missing:
+        msg = f"Models {missing} are not in the file; models are {models}."
         raise ValueError(msg)
 
     structures = []
@@ -84,4 +88,4 @@ def read(
         st.metadata["model"] = number
         structures.append(st)
 
-    return structures if model == "all" else structures[0]
+    return structures if isinstance(model, list) or model == "all" else structures[0]
