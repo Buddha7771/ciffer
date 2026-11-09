@@ -56,6 +56,8 @@ class Structure:
 
     """
 
+    __module__ = "ciffer"
+
     def __init__(
         self,
         *,

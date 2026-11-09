@@ -40,6 +40,8 @@ class Table:
 
     """
 
+    __module__ = "ciffer"
+
     def __init__(
         self,
         columns: Mapping[str, ArrayLike] | None = None,
@@ -204,6 +206,8 @@ class EdgeList:
         bond["order"]
 
     """
+
+    __module__ = "ciffer"
 
     def __init__(
         self,

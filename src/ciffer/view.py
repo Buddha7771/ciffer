@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 class Level(IntEnum):
     """Levels of a structure, from the bottom up."""
 
+    __module__ = "ciffer"
+
     ATOM = 0
     RESIDUE = 1
     CHAIN = 2
@@ -53,6 +55,8 @@ class View:
         ca.extract()             # a new structure
 
     """
+
+    __module__ = "ciffer"
 
     def __init__(
         self,
