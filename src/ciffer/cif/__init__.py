@@ -62,6 +62,7 @@ def read(
     entity = Category(block, "_entity.")
     entity_poly = Category(block, "_entity_poly.")
     chem_comp = Category(block, "_chem_comp.")
+    scheme = Category(block, "_pdbx_poly_seq_scheme.")
 
     # A file without model numbers holds one model, numbered 1.
     numbers = site.get("pdbx_PDB_model_num")
@@ -84,7 +85,7 @@ def read(
     structures = []
     for number in chosen:
         rows = np.flatnonzero(numbers == number)
-        st = from_categories(site.take(rows), entity, entity_poly, chem_comp)
+        st = from_categories(site.take(rows), entity, entity_poly, chem_comp, scheme)
         st.metadata["model"] = number
         structures.append(st)
 

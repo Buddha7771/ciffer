@@ -85,8 +85,11 @@ def from_categories(
     entity: Category,
     entity_poly: Category,
     chem_comp: Category,
+    scheme: Category,
 ) -> Structure:
     """Build the atoms, residues, and chains of one model.
+
+    Polymer residues follow the sequence, including those with no atoms.
 
     Parameters
     ----------
@@ -98,6 +101,8 @@ def from_categories(
         ``_entity_poly``, for the polymer_type of each chain.
     chem_comp: Category
         ``_chem_comp``, for the comp_type of each residue.
+    scheme: Category
+        ``_pdbx_poly_seq_scheme``, for polymer residues with no atoms.
 
     Examples
     --------
@@ -106,7 +111,7 @@ def from_categories(
         site = Category(block, "_atom_site.")
         entity = Category(block, "_entity.")
         ...
-        st = from_categories(site.take(rows), entity, entity_poly, chem_comp)
+        st = from_categories(site.take(rows), entity, entity_poly, chem_comp, scheme)
 
     """
     per_atom = {
@@ -119,31 +124,60 @@ def from_categories(
         "ins_code": site.get("pdbx_PDB_ins_code"),
     }
 
+    listed = {
+        "label_asym_id": scheme.get("asym_id"),
+        "auth_asym_id": scheme.get("pdb_strand_id"),
+        "entity_id": scheme.get("entity_id"),
+        "name": scheme.get("mon_id"),
+        "label_seq_id": scheme.get("seq_id"),
+        "auth_seq_id": scheme.get("pdb_seq_num"),
+        "ins_code": scheme.get("pdb_ins_code"),
+    }
+
     # Non-polymers have no label_seq_id, so auth_seq_id and ins_code tell waters apart;
     # name splits two residue types at one position (microheterogeneity).
     keys = ["label_asym_id", "label_seq_id", "auth_seq_id", "ins_code", "name"]
-    first, atom_to_residue = _group_rows(*(per_atom[key] for key in keys))
-    residues = {name: values[first] for name, values in per_atom.items()}
-    first, residue_to_chain = _group_rows(residues["label_asym_id"])
+    rows = {name: np.concatenate([listed[name], per_atom[name]]) for name in per_atom}
 
+    first, group = _group_rows(*(rows[key] for key in keys))
+    residues = {name: values[first] for name, values in rows.items()}
+
+    first, residue_to_chain = _group_rows(residues["label_asym_id"])
+    chains = {name: values[first] for name, values in residues.items()}
+
+    return Structure(
+        atoms=Table(_atom_table(site)),
+        residues=Table(_residue_table(residues, chem_comp)),
+        chains=Table(_chain_table(chains, entity, entity_poly)),
+        atom_to_residue=group[len(scheme) :],
+        residue_to_chain=residue_to_chain,
+    )
+
+
+def _chain_table(
+    chains: dict[str, NDArray[np.str_]], entity: Category, entity_poly: Category
+) -> dict[str, NDArray]:
     entity_type = dict(zip(entity.get("id"), entity.get("type"), strict=True))
     polymer_type = dict(
         zip(entity_poly.get("entity_id"), entity_poly.get("type"), strict=True)
     )
-    comp_type = dict(zip(chem_comp.get("id"), chem_comp.get("type"), strict=True))
-
-    entity_id = residues["entity_id"][first]
-    chains = {
-        "label_asym_id": residues["label_asym_id"][first],
-        "auth_asym_id": residues["auth_asym_id"][first],
+    entity_id = chains["entity_id"]
+    return {
+        "label_asym_id": chains["label_asym_id"],
+        "auth_asym_id": chains["auth_asym_id"],
         "entity_id": entity_id,
         "entity_type": np.array([entity_type.get(e, "") for e in entity_id], str),
         "polymer_type": np.array([polymer_type.get(e, "") for e in entity_id], str),
     }
 
+
+def _residue_table(
+    residues: dict[str, NDArray[np.str_]], chem_comp: Category
+) -> dict[str, NDArray]:
+    comp_type = dict(zip(chem_comp.get("id"), chem_comp.get("type"), strict=True))
     names = residues["name"]
     seq = residues["label_seq_id"]
-    residues = {
+    return {
         "name": names,
         "label_seq_id": np.where(seq == "", "-1", seq).astype(int),
         "auth_seq_id": residues["auth_seq_id"],
@@ -151,10 +185,12 @@ def from_categories(
         "comp_type": np.array([comp_type.get(n, "") for n in names], str),
     }
 
+
+def _atom_table(site: Category) -> dict[str, NDArray]:
     occupancy = site.get("occupancy")
     b_factor = site.get("B_iso_or_equiv")
     charge = site.get("pdbx_formal_charge")
-    atoms = {
+    return {
         "name": site["label_atom_id"],
         "element": site["type_symbol"],
         "altloc": site["label_alt_id"],
@@ -163,14 +199,6 @@ def from_categories(
         "charge": np.where(charge == "", "0", charge).astype(int),
         "xyz": np.stack([site[f"Cartn_{a}"] for a in "xyz"], axis=1).astype(float),
     }
-
-    return Structure(
-        atoms=Table(atoms),
-        residues=Table(residues),
-        chains=Table(chains),
-        atom_to_residue=atom_to_residue,
-        residue_to_chain=residue_to_chain,
-    )
 
 
 def _group_rows(*columns: NDArray) -> tuple[NDArray[np.intp], NDArray[np.intp]]:

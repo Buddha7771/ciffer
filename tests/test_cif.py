@@ -58,6 +58,18 @@ def test_read_matches_gemmi(name: str, options: dict[str, Any]):
     assert ciffer_atoms(st) == gemmi_atoms(DATA / name, **options)
 
 
+def test_read_adds_unobserved_residues():
+    st = ciffer.read(DATA / "1STP.cif.gz")
+
+    observed = np.bincount(st.atom_to_residue, minlength=len(st.residues)) > 0
+    assert (~observed).sum() == 38
+    polymer = st.residues[st.residue_to_chain == 0]
+    assert polymer["label_seq_id"].tolist() == list(range(1, 160))
+    gemmi_st = gemmi.read_structure(str(DATA / "1STP.cif.gz"))
+    gemmi_st.setup_entities()
+    assert polymer["name"].tolist() == gemmi_st.entities[0].full_sequence
+
+
 def test_read_all_models():
     models = ciffer.read(DATA / "1L2Y_3models.cif.gz", model="all")
 
@@ -86,16 +98,19 @@ def test_read_types():
 
 def test_read_without_optional_items(tmp_path: Path):
     doc = gemmi.cif.read(str(DATA / "1STP.cif.gz"))
-    loop = doc.sole_block().find_loop("_atom_site.id").get_loop()
+    block = doc.sole_block()
+    loop = block.find_loop("_atom_site.id").get_loop()
     items = ["pdbx_PDB_model_num", "occupancy", "B_iso_or_equiv", "pdbx_formal_charge"]
     for item in items:
         loop.remove_column(f"_atom_site.{item}")
+    block.find_mmcif_category("_pdbx_poly_seq_scheme.").erase()
     path = tmp_path / "1STP.cif"
     doc.write_file(str(path))
 
     st = ciffer.read(path)
 
     assert st.metadata["model"] == 1
+    assert len(st.residues) == 206  # observed residues only
     assert np.isnan(st.atoms["occupancy"]).all()
     assert np.isnan(st.atoms["b_factor"]).all()
     assert (st.atoms["charge"] == 0).all()
