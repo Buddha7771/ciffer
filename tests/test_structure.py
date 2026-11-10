@@ -193,7 +193,10 @@ def test_repr_shows_schema(st: Structure):
     assert "    id  '1abc'" in text
 
 
-def test_view_repr_shows_columns(st: Structure):
+def test_view_repr_shows_columns_and_edges(st: Structure):
     assert repr(st.atoms).startswith("<View atoms=6>\n  name")
+    assert "    bond  3 edges" in repr(st.atoms)
+
+    # Only the edges between the selected rows are counted.
     assert repr(st.atoms[:2]).startswith("<View atoms=2 of 6>")
-    assert "edges" not in repr(st.atoms)
+    assert "    bond  1 edges" in repr(st.atoms[:2])

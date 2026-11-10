@@ -189,13 +189,12 @@ class View:
             yield self.__class__(self.structure, self.level, np.array([index]))
 
     def __repr__(self) -> str:
-        """Return the level, the number of rows, and the columns."""
+        """Return the level, the number of rows, the columns, and the edges."""
         header = f"<View {self.level.name.lower()}s={len(self)}"
         if self._indices is not None:
             header += f" of {len(self.table)}"
-        # The table lists its columns right after the header, then its edges.
-        columns = repr(self.table).splitlines()[1 : 1 + len(self.table.columns)]
-        return "\n".join([f"{header}>", *columns])
+        table = self.table if self._indices is None else self.table.take(self._indices)
+        return "\n".join([f"{header}>", *repr(table).splitlines()[1:]])
 
     def _convert(self, level: Level) -> View:
         st = self.structure
