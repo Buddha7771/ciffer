@@ -155,6 +155,37 @@ def test_read_glycans():
     assert links["type"].tolist() == ["covale"] * 12
 
 
+def test_read_metadata():
+    st = ciffer.read(DATA / "1EJG.cif.gz")
+
+    assert st.metadata == {
+        "id": "1EJG",
+        "title": "CRAMBIN AT ULTRA-HIGH RESOLUTION: VALENCE ELECTRON DENSITY.",
+        "keywords": "PLANT PROTEIN",
+        "deposit_date": "2000-03-02",
+        "methods": ["X-RAY DIFFRACTION"],
+        "authors": [
+            "Jelsch, C.",
+            "Teeter, M.M.",
+            "Lamzin, V.",
+            "Pichon-Lesme, V.",
+            "Blessing, B.",
+            "Lecomte, C.",
+        ],
+        "resolution": 0.54,
+        "r_free": 0.094,
+        "release_date": "2000-04-05",  # the first of six revisions
+        "doi": "10.1073/pnas.97.7.3171",
+        "model": 1,
+    }
+
+    # Only values in the file are kept: NMR has no resolution, and 1STP has no DOI.
+    assert "resolution" not in ciffer.read(DATA / "1L2Y_3models.cif.gz").metadata
+    st = ciffer.read(DATA / "1STP.cif.gz")
+    assert "doi" not in st.metadata
+    assert st.chains["description"][1] == "BIOTIN"
+
+
 def test_read_all_models():
     models = ciffer.read(DATA / "1L2Y_3models.cif.gz", model="all")
 

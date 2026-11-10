@@ -9,6 +9,7 @@ import numpy as np
 from .altloc import conformer_rows
 from .category import Category
 from .hierarchy import from_categories
+from .metadata import entry_metadata
 
 if TYPE_CHECKING:
     from ciffer.structure import Structure
@@ -112,7 +113,7 @@ def read(
             comp_bond=comp_bond,
             conn=conn,
         )
-        st.metadata["model"] = number
+        st.metadata = {**entry_metadata(block), "model": number}
         structures.append(st)
 
     return structures if isinstance(model, list) or model == "all" else structures[0]

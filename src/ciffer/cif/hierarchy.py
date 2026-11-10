@@ -33,7 +33,7 @@ def from_categories(
     site: Category
         ``_atom_site`` rows of one model.
     entity: Category
-        ``_entity``, for the entity_type of each chain.
+        ``_entity``, for the entity_type and description of each chain.
     entity_poly: Category
         ``_entity_poly``, for the polymer_type of each chain.
     chem_comp: Category
@@ -137,6 +137,9 @@ def _chain_table(
     chains: dict[str, NDArray[np.str_]], entity: Category, entity_poly: Category
 ) -> dict[str, NDArray]:
     entity_type = dict(zip(entity.get("id"), entity.get("type"), strict=True))
+    description = dict(
+        zip(entity.get("id"), entity.get("pdbx_description"), strict=True)
+    )
     polymer_type = dict(
         zip(entity_poly.get("entity_id"), entity_poly.get("type"), strict=True)
     )
@@ -147,6 +150,7 @@ def _chain_table(
         "entity_id": entity_id,
         "entity_type": np.array([entity_type.get(e, "") for e in entity_id], str),
         "polymer_type": np.array([polymer_type.get(e, "") for e in entity_id], str),
+        "description": np.array([description.get(e, "") for e in entity_id], str),
     }
 
 
