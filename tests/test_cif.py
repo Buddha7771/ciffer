@@ -52,6 +52,7 @@ def ciffer_atoms(st: Structure) -> list:
         ("1STP.cif.gz", {}),
         ("1L2Y_3models.cif.gz", {"model": 2}),
         ("1EJG.cif.gz", {}),
+        ("4DWA.cif.gz", {}),
     ],
 )
 def test_read_matches_gemmi(name: str, options: dict[str, Any]):
@@ -106,6 +107,52 @@ def test_read_keeps_first_type_without_atoms(tmp_path: Path):
 
     at_22 = st.residues["label_seq_id"] == 22
     assert st.residues["name"][at_22].tolist() == ["PRO"]  # the first listed type
+
+
+def test_read_bonds():
+    st = ciffer.read(DATA / "1EJG.cif.gz", altloc="all")
+    bond, conn = st.atoms.edges["bond"], st.atoms.edges["struct_conn"]
+    name, altloc = st.atoms["name"], st.atoms["altloc"]
+    seq = st.residues["label_seq_id"][st.atom_to_residue]
+
+    # Cys 3 has no altloc; its HG is gone, since SG bonds to Cys 40.
+    at_3 = seq[bond.src] == 3
+    names = zip(name[bond.src][at_3], name[bond.dst][at_3], strict=True)
+    assert sorted(names) == [
+        ("C", "O"),
+        ("CA", "C"),
+        ("CA", "CB"),
+        ("CA", "HA"),
+        ("CB", "HB2"),
+        ("CB", "HB3"),
+        ("CB", "SG"),
+        ("N", "CA"),
+        ("N", "H"),
+    ]
+    assert bond["order"][at_3].tolist().count(2) == 1  # C=O
+
+    # Atoms of different altlocs are never bonded.
+    ends = altloc[bond.src], altloc[bond.dst]
+    assert ((ends[0] == ends[1]) | (ends[0] == "") | (ends[1] == "")).all()
+
+    pairs = sorted(zip(seq[conn.src].tolist(), seq[conn.dst].tolist(), strict=True))
+    assert pairs == [(3, 40), (4, 32), (16, 26)]
+    assert conn["type"].tolist() == ["disulf"] * 3
+
+
+def test_read_glycans():
+    st = ciffer.read(DATA / "4DWA.cif.gz")
+
+    # Each glycan is a chain of its own, and its sugars are told apart by auth_seq_id.
+    glycans = st.chains[st.chains["entity_type"] == "branched"]
+    assert len(glycans) == 5
+    first = glycans[0].residues
+    assert first["name"].tolist() == ["NAG", "NAG", "BMA", "BMA", "BMA"]
+    assert first["auth_seq_id"].tolist() == ["1", "2", "3", "4", "5"]
+
+    # Sugars link to each other as covale.
+    links = glycans.atoms.edges["struct_conn"]
+    assert links["type"].tolist() == ["covale"] * 12
 
 
 def test_read_all_models():

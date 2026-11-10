@@ -7,7 +7,8 @@ import gemmi
 import numpy as np
 
 from .altloc import conformer_rows
-from .category import Category, from_categories
+from .category import Category
+from .hierarchy import from_categories
 
 if TYPE_CHECKING:
     from ciffer.structure import Structure
@@ -77,6 +78,8 @@ def read(
     entity_poly = Category(block, "_entity_poly.")
     chem_comp = Category(block, "_chem_comp.")
     scheme = Category(block, "_pdbx_poly_seq_scheme.")
+    comp_bond = Category(block, "_chem_comp_bond.")
+    conn = Category(block, "_struct_conn.")
 
     # A file without model numbers holds one model, numbered 1.
     numbers = site.get("pdbx_PDB_model_num")
@@ -100,7 +103,15 @@ def read(
     for number in chosen:
         model_site = site.take(np.flatnonzero(numbers == number))
         model_site = model_site.take(conformer_rows(model_site, altloc))
-        st = from_categories(model_site, entity, entity_poly, chem_comp, scheme)
+        st = from_categories(
+            model_site,
+            entity=entity,
+            entity_poly=entity_poly,
+            chem_comp=chem_comp,
+            scheme=scheme,
+            comp_bond=comp_bond,
+            conn=conn,
+        )
         st.metadata["model"] = number
         structures.append(st)
 
