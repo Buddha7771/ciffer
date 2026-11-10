@@ -186,6 +186,21 @@ def test_read_metadata():
     assert st.chains["description"][1] == "BIOTIN"
 
 
+def test_read_pdb_format():
+    pdb = ciffer.read(DATA / "1STP.pdb.gz")
+    cif = ciffer.read(DATA / "1STP.cif.gz")
+
+    # Atoms are the same; residues with no atoms and bonds are not in PDB files.
+    assert pdb.atoms["name"].tolist() == cif.atoms["name"].tolist()
+    assert np.array_equal(pdb.atoms["xyz"], cif.atoms["xyz"])
+    assert pdb.chains["entity_type"].tolist() == cif.chains["entity_type"].tolist()
+    assert len(pdb.residues) == 206
+    assert len(pdb.atoms.edges["bond"]) == 0
+
+    with pytest.raises(ValueError, match="optionally gzipped"):
+        ciffer.read(DATA / "1STP.txt")
+
+
 def test_read_all_models():
     models = ciffer.read(DATA / "1L2Y_3models.cif.gz", model="all")
 

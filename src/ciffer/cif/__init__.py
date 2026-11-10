@@ -39,12 +39,16 @@ def read(
     model: int | list[int] | Literal["all"] | None = None,
     altloc: Literal["occupancy", "all"] | None = None,
 ) -> Structure | list[Structure]:
-    """Read an mmCIF file.
+    """Read an mmCIF or PDB file.
+
+    A PDB file is read as gemmi converts it to mmCIF, so it has no residues without
+    atoms and no bonds within residues, and its chains have label ids gemmi assigns.
+    Without SEQRES records, its polymer residues have a label_seq_id of -1.
 
     Parameters
     ----------
     path: str | os.PathLike[str]
-        An mmCIF file, optionally gzipped.
+        A ``.cif``, ``.mmcif``, ``.pdb``, or ``.ent`` file, optionally gzipped.
     model: int | list[int] | Literal["all"] | None, optional
         Model number to read, or a list of them. None reads the first model, and
         ``"all"`` reads every model.
@@ -63,6 +67,7 @@ def read(
     .. code-block:: python
 
         st = ciffer.read("1abc.cif.gz")
+        st = ciffer.read("design.pdb")
         pair = ciffer.read("2k9q.cif", model=[1, 3])
         ensemble = ciffer.read("2k9q.cif", model="all")
         likely = ciffer.read("1ejg.cif", altloc="occupancy")
@@ -73,7 +78,19 @@ def read(
         msg = f"altloc must be None, 'occupancy', or 'all', got {altloc!r}."
         raise ValueError(msg)
 
-    block = gemmi.cif.read(os.fspath(path)).sole_block()
+    name = os.fspath(path)
+    stem = name.lower().removesuffix(".gz")
+    if stem.endswith((".cif", ".mmcif")):
+        block = gemmi.cif.read(name).sole_block()
+    elif stem.endswith((".pdb", ".ent")):
+        pdb = gemmi.read_structure(name)
+        pdb.setup_entities()
+        pdb.assign_label_seq_id()
+        block = pdb.make_mmcif_document().sole_block()
+    else:
+        msg = f"{name} is not a .cif, .mmcif, .pdb, or .ent file, optionally gzipped."
+        raise ValueError(msg)
+
     site = Category(block, "_atom_site.")
     entity = Category(block, "_entity.")
     entity_poly = Category(block, "_entity_poly.")
