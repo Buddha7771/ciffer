@@ -7,7 +7,7 @@ import numpy as np
 
 from .serialize import dump_bytes, load_bytes
 from .table import EdgeList, Table, as_indices
-from .view import Level, View
+from .view import AtomView, ChainView, Level, ResidueView
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -99,19 +99,19 @@ class Structure:
         self.metadata: dict[str, Any] = metadata if metadata is not None else {}
 
     @property
-    def atoms(self) -> View:
+    def atoms(self) -> AtomView:
         """View of all atoms."""
-        return View(self, Level.ATOM)
+        return AtomView(self)
 
     @property
-    def residues(self) -> View:
+    def residues(self) -> ResidueView:
         """View of all residues."""
-        return View(self, Level.RESIDUE)
+        return ResidueView(self)
 
     @property
-    def chains(self) -> View:
+    def chains(self) -> ChainView:
         """View of all chains."""
-        return View(self, Level.CHAIN)
+        return ChainView(self)
 
     def copy(self) -> Self:
         """Return a deep copy of the structure, including its metadata."""

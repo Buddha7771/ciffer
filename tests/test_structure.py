@@ -91,6 +91,27 @@ def test_add_and_delete_columns(st: Structure):
         del st.chains["id"]
 
 
+def test_standard_columns_as_attributes(st: Structure):
+    assert st.atoms.xyz is st.atoms["xyz"]
+    st.atoms[[0]].xyz = -1.0
+    assert st.atoms.xyz[0].tolist() == [-1.0, -1.0, -1.0]
+    assert st.chains[1].residues.name.tolist() == ["ZN"]
+
+    # A missing column raises AttributeError, so hasattr works.
+    assert not hasattr(st.atoms, "b_factor")
+    with pytest.raises(AttributeError, match="no 'label_asym_id' column"):
+        _ = st.chains.label_asym_id
+
+
+def test_standard_edges_as_attributes(st: Structure):
+    st.atoms.bond.order[0] = 3
+    assert st.atoms.edges["bond"]["order"].tolist() == [3, 1, 2]
+
+    bond = st.atoms[[4, 3, 0]].bond
+    assert list(zip(bond.src, bond.dst, strict=True)) == [(1, 0)]
+    assert not hasattr(st.atoms, "struct_conn")
+
+
 def test_level_conversion_uses_stored_order(st: Structure):
     assert st.atoms[[5, 3, 0, 4]].residues.indices.tolist() == [0, 1, 2]
     assert st.atoms[[5, 3, 0, 4]].chains.indices.tolist() == [0, 1]
@@ -194,9 +215,10 @@ def test_repr_shows_schema(st: Structure):
 
 
 def test_view_repr_shows_columns_and_edges(st: Structure):
-    assert repr(st.atoms).startswith("<View atoms=6>\n  name")
+    assert repr(st.atoms).startswith("<AtomView atoms=6>\n  name")
     assert "    bond  3 edges" in repr(st.atoms)
+    assert repr(st.atoms.bond).startswith("<Bond edges=3>")
 
     # Only the edges between the selected rows are counted.
-    assert repr(st.atoms[:2]).startswith("<View atoms=2 of 6>")
+    assert repr(st.atoms[:2]).startswith("<AtomView atoms=2 of 6>")
     assert "    bond  1 edges" in repr(st.atoms[:2])

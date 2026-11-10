@@ -266,7 +266,7 @@ class EdgeList:
     def __repr__(self) -> str:
         """Return the number of edges and the schema of the value columns."""
         lines = _schema({name: self[name] for name in self.columns})
-        return "\n".join([f"<EdgeList edges={len(self)}>", *lines])
+        return "\n".join([f"<{type(self).__name__} edges={len(self)}>", *lines])
 
     def _check_length(self, name: str, array: NDArray[Any]) -> NDArray[Any]:
         if len(array) != len(self):
