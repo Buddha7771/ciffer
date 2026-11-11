@@ -77,6 +77,26 @@ def test_selected_view_reads_copy_and_writes_through(st: Structure):
         selected["b_factor"] = 0.0
 
 
+def test_assignment_widens_columns(st: Structure):
+    # A longer string or a float among integers widens the column rather than being cut.
+    st.chains["id"] = "ABC"
+    assert st.chains["id"].tolist() == ["ABC", "ABC"]
+    st.residues[[2]]["name"] = "A1LIG"
+    assert st.residues["name"].tolist() == ["ALA", "GLY", "A1LIG"]
+    st.atoms.edges["bond"]["order"] = 1.5
+    assert st.atoms.edges["bond"]["order"].tolist() == [1.5, 1.5, 1.5]
+
+    # A value that fits keeps the dtype, booleans stay masks, and numbers stay numbers.
+    st.atoms["b_factor"] = np.zeros(6, np.float32)
+    st.atoms["b_factor"] = 0
+    assert st.atoms["b_factor"].dtype == np.float32
+    st.atoms["hetero"] = np.zeros(6, bool)
+    st.atoms[[0]]["hetero"] = 1
+    assert st.atoms["hetero"].dtype == bool
+    with pytest.raises(ValueError, match="could not convert"):
+        st.atoms[[0]]["b_factor"] = "x"
+
+
 def test_add_and_delete_columns(st: Structure):
     st.atoms["b_factor"] = np.zeros(6)
     assert "b_factor" in st.atoms

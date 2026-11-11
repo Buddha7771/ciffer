@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar, overload
 
 import numpy as np
 
-from .table import EdgeList, as_indices
+from .table import EdgeList, as_indices, fitting_dtype
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -218,7 +218,12 @@ class View:
         if self._indices is None:
             self.table[name] = value
         elif name in self.table:
-            self.table[name][self._indices] = value
+            column = self.table[name]
+            dtype = fitting_dtype(column, value)
+            if dtype != column.dtype:
+                column = column.astype(dtype)
+                self.table[name] = column
+            column[self._indices] = value
         else:
             msg = f"Column {name!r} does not exist; add it on the whole level first."
             raise TypeError(msg)

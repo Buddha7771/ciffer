@@ -85,7 +85,8 @@ class Table:
                 msg = f"Column {name!r} needs an array; the table has no columns yet."
                 raise ValueError(msg)
             if name in self._columns:
-                array = np.full_like(self._columns[name], array)
+                column = self._columns[name]
+                array = np.full(column.shape, array, dtype=fitting_dtype(column, array))
             else:
                 array = np.full(len(self), array)
 
@@ -267,7 +268,8 @@ class EdgeList:
         array = np.asarray(value)
         if array.ndim == 0:
             if name in self._values:
-                array = np.full_like(self._values[name], array)
+                column = self._values[name]
+                array = np.full(column.shape, array, dtype=fitting_dtype(column, array))
             else:
                 array = np.full(len(self), array)
         self._values[name] = self._check_length(name, array)
@@ -286,6 +288,31 @@ class EdgeList:
             msg = f"{name} has {len(array)} entries, but there are {len(self)} edges."
             raise ValueError(msg)
         return array
+
+
+def fitting_dtype(column: NDArray[Any], value: ArrayLike) -> np.dtype[Any]:
+    """Return the dtype of ``column``, widened if ``value`` would be cut to fit it.
+
+    An array value widens by its dtype, and a scalar by its value. Booleans stay
+    booleans, and numbers never become text, so such values fail as numpy casts them.
+
+    >>> fitting_dtype(np.array(["A", "B"]), "ABC")
+    dtype('<U3')
+    >>> fitting_dtype(np.zeros(2, np.float32), 0)
+    dtype('float32')
+    >>> fitting_dtype(np.zeros(2, np.int64), 1.5)
+    dtype('float64')
+    >>> fitting_dtype(np.zeros(2, bool), 1), fitting_dtype(np.zeros(2), "x")
+    (dtype('bool'), dtype('float64'))
+
+    """
+    dtype = np.promote_types(column.dtype, np.min_scalar_type(np.asarray(value)))
+    numeric = "iufc"
+    if column.dtype.kind == "b" or (
+        column.dtype.kind in numeric and dtype.kind not in numeric
+    ):
+        return column.dtype
+    return dtype
 
 
 def as_indices(value: ArrayLike) -> NDArray[np.intp]:
