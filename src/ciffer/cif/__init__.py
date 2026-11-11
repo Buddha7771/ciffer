@@ -95,6 +95,7 @@ def read(
     entity = Category(block, "_entity.")
     entity_poly = Category(block, "_entity_poly.")
     chem_comp = Category(block, "_chem_comp.")
+    struct_asym = Category(block, "_struct_asym.")
     scheme = Category(block, "_pdbx_poly_seq_scheme.")
     comp_bond = Category(block, "_chem_comp_bond.")
     conn = Category(block, "_struct_conn.")
@@ -132,6 +133,7 @@ def read(
             entity=entity,
             entity_poly=entity_poly,
             chem_comp=chem_comp,
+            struct_asym=struct_asym,
             scheme=scheme,
             comp_bond=comp_bond,
             conn=conn,

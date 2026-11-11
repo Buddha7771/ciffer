@@ -297,15 +297,16 @@ def test_bad_options_raise(options: dict[str, Any], message: str):
 
 
 @pytest.mark.parametrize(
-    "name",
+    ("name", "options"),
     [
-        "1G2J.cif.gz",  # RNA and ligands
-        "1STP.cif.gz",  # residues with no atoms
-        "1EJG.cif.gz",  # two residue types at one position
+        ("1G2J.cif.gz", {}),  # RNA and ligands
+        ("1STP.cif.gz", {}),  # residues with no atoms
+        ("1EJG.cif.gz", {}),  # two residue types at one position
+        ("1STP.cif.gz", {"assembly": True}),  # ligand chains before polymer chains
     ],
 )
-def test_write_round_trip(tmp_path: Path, name: str):
-    st = ciffer.read(DATA / name, altloc="all")
+def test_write_round_trip(tmp_path: Path, name: str, options: dict[str, Any]):
+    st = ciffer.read(DATA / name, altloc="all", **options)
     ciffer.write(st, tmp_path / "out.cif.gz")
     back = ciffer.read(tmp_path / "out.cif.gz", altloc="all")
 

@@ -34,6 +34,7 @@ def from_categories(
     entity: Category,
     entity_poly: Category,
     chem_comp: Category,
+    struct_asym: Category,
     scheme: Category,
     comp_bond: Category,
     conn: Category,
@@ -52,6 +53,8 @@ def from_categories(
         ``_entity_poly``, for the polymer_type of each chain.
     chem_comp: Category
         ``_chem_comp``, for the comp_type of each residue.
+    struct_asym: Category
+        ``_struct_asym``, for the order of chains.
     scheme: Category
         ``_pdbx_poly_seq_scheme``, for polymer residues with no atoms.
     comp_bond: Category
@@ -100,9 +103,16 @@ def from_categories(
     )
     rows = {name: values[keep] for name, values in rows.items()}
 
-    first, group = group_rows(*(rows[key] for key in keys))
-    residues = {name: values[first] for name, values in rows.items()}
-    atom_to_residue = group[from_atoms[keep]]
+    # Rows of each chain go together, in the order _struct_asym lists chains (others
+    # last), so residues and chains come out in that order.
+    listed_at = {asym: i for i, asym in enumerate(struct_asym.get("id").tolist())}
+    chain_ids, chain_of_row = np.unique(rows["label_asym_id"], return_inverse=True)
+    rank = [listed_at.get(asym, len(listed_at)) for asym in chain_ids.tolist()]
+    order = np.argsort(np.array(rank)[chain_of_row], kind="stable")
+
+    first, group = group_rows(*(rows[key][order] for key in keys))
+    residues = {name: values[order][first] for name, values in rows.items()}
+    atom_to_residue = group[np.argsort(order)][from_atoms[keep]]  # back to row order
 
     first, residue_to_chain = group_rows(residues["label_asym_id"])
     chains = {name: values[first] for name, values in residues.items()}
