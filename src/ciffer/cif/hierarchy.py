@@ -16,6 +16,7 @@ from .bonds import (
     struct_conn_edges,
 )
 from .category import Category, group_rows, to_cif
+from .metadata import ENTRY_KEYS, metadata_categories
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 
 REQUIRED = {"atoms": ["name", "element", "xyz"], "residues": ["name"]}
 WRITTEN_EDGES = {("atoms", "bond"): Bond, ("atoms", "struct_conn"): StructConn}
+# Metadata that read sets, written in _atom_site or not at all.
+READ_KEYS = {"model", "models", "assembly", "assemblies"}
 # The values of _entity.type.
 ENTITY_TYPES = {"polymer", "non-polymer", "branched", "macrolide", "water"}
 # The values of _entity_poly.type.
@@ -256,6 +259,7 @@ def to_categories(st: Structure) -> dict[str, Items]:
     entity_chains = group_rows(chains["entity_id"])[0]
     names, first_of_name = np.unique(residues["name"], return_index=True)
     return {
+        **metadata_categories(st.metadata),
         "_atom_site.": _atom_site(st, atoms, residues, chains),
         "_chem_comp.": {
             "id": to_cif(names),
@@ -436,9 +440,9 @@ def unwritten(st: Structure) -> list[str]:
     """Name what ``st`` holds that the file cannot.
 
     Those are columns that are not standard fields, edge groups other than ``bond`` and
-    ``struct_conn``, bonds between residues, and residues with no atoms outside polymer
-    sequences. Standard columns are the Fields of each class, such as ``AtomView.xyz``
-    and ``Bond.order``.
+    ``struct_conn``, bonds between residues, residues with no atoms outside polymer
+    sequences, and metadata keys that ``read`` does not set. Standard columns are the
+    Fields of each class, such as ``AtomView.xyz`` and ``Bond.order``.
     """
     _, residues, chains = _filled_tables(st)
     observed = np.bincount(st.atom_to_residue, minlength=len(st.residues)) > 0
@@ -470,6 +474,9 @@ def unwritten(st: Structure) -> list[str]:
         a2r = st.atom_to_residue
         between = int((a2r[bond.src] != a2r[bond.dst]).sum())
         names += [f"{between} bonds between residues"] if between else []
+
+    known = ENTRY_KEYS | READ_KEYS
+    names += [f"metadata[{key!r}]" for key in st.metadata if key not in known]
     return names
 
 

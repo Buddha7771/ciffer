@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -311,8 +312,15 @@ def test_bad_options_raise(options: dict[str, Any], message: str):
 def test_write_round_trip(tmp_path: Path, name: str, options: dict[str, Any]):
     options = {"altloc": "all"} | options
     st = ciffer.read(DATA / name, **options)
-    ciffer.write(st, tmp_path / "out.cif.gz")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # nothing read is left unwritten
+        ciffer.write(st, tmp_path / "out.cif.gz")
     back = ciffer.read(tmp_path / "out.cif.gz", altloc="all")
+
+    # Keys about the source file, such as its models and assemblies, may differ.
+    source = ("models", "assembly", "assemblies")
+    ours = {k: v for k, v in st.metadata.items() if k not in source}
+    assert {k: v for k, v in back.metadata.items() if k not in source} == ours
 
     for ours, theirs in zip(st.tables, back.tables, strict=True):
         for column in ours.columns:
@@ -327,6 +335,32 @@ def test_write_round_trip(tmp_path: Path, name: str, options: dict[str, Any]):
         assert theirs.dst.tolist() == ours.dst.tolist()
         for column in ours.columns:
             assert theirs[column].tolist() == ours[column].tolist()
+
+
+def test_write_metadata(tmp_path: Path):
+    path = tmp_path / "out.cif"
+    st = ciffer.read(DATA / "1EJG.cif.gz")
+    ciffer.write(st, path)
+    assert gemmi.read_structure(str(path)).resolution == 0.54
+
+    # An EM resolution has a category of its own.
+    st.metadata |= {"methods": ["ELECTRON MICROSCOPY"], "resolution": 3.1}
+    ciffer.write(st, path)
+    block = gemmi.cif.read(str(path)).sole_block()
+    assert block.find_value("_em_3d_reconstruction.resolution") == "3.1"
+    assert ciffer.read(path).metadata["resolution"] == 3.1
+
+    st.metadata["doi"] = None
+    ciffer.write(st, path)
+    assert "doi" not in ciffer.read(path).metadata
+
+    st.metadata["ptm"] = 0.8
+    with pytest.warns(UserWarning, match=r"Not written: metadata\['ptm'\]"):
+        ciffer.write(st, path)
+
+    st.metadata["authors"] = "Kim, J."
+    with pytest.raises(TypeError, match=r"metadata\['authors'\] must be a list"):
+        ciffer.write(st, path)
 
 
 def test_write_fills_optional_fields(tmp_path: Path):

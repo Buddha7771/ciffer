@@ -158,7 +158,8 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
     ----------
     st: Structure
         Needs atom ``name``, ``element``, and ``xyz``, and residue ``name``. Missing
-        standard columns are filled, and other columns are skipped with a warning.
+        standard columns are filled, and other columns and metadata keys are skipped
+        with a warning.
     path: str | os.PathLike[str]
         A ``.cif`` or ``.mmcif`` file, optionally gzipped.
 
