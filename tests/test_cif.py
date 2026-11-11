@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import ciffer
-from ciffer import Structure
+from ciffer import Structure, Table
 
 DATA = Path(__file__).parent / "data"
 
@@ -294,3 +294,67 @@ def test_read_without_optional_items(tmp_path: Path):
 def test_bad_options_raise(options: dict[str, Any], message: str):
     with pytest.raises(ValueError, match=message):
         ciffer.read(DATA / "1STP.cif.gz", **options)
+
+
+def test_write_round_trip(tmp_path: Path):
+    st = ciffer.read(DATA / "1G2J.cif.gz")
+    ciffer.write(st, tmp_path / "out.cif.gz")
+    back = ciffer.read(tmp_path / "out.cif.gz")
+
+    for ours, theirs in zip(st.tables, back.tables, strict=True):
+        for name in ours.columns:
+            if name != "polymer_type":
+                floats = ours[name].dtype.kind == "f"
+                assert np.array_equal(ours[name], theirs[name], equal_nan=floats)
+    assert back.atom_to_residue.tolist() == st.atom_to_residue.tolist()
+    assert back.residue_to_chain.tolist() == st.residue_to_chain.tolist()
+
+
+def test_write_fills_optional_fields(tmp_path: Path):
+    st = Structure(
+        atoms=Table(
+            {
+                "name": ["N", "CA", "N", "C1", "O", "O"],
+                "element": ["N", "C", "N", "C", "O", "O"],
+                "xyz": np.zeros((6, 3)),
+                "plddt": np.ones(6),
+            }
+        ),
+        residues=Table({"name": ["GLY", "MSE", "LIG", "HOH", "HOH"]}),
+        chains=Table(
+            {
+                "label_asym_id": ["A", "B", "C"],
+                "entity_type": ["polymer", "non-polymer", "water"],
+            }
+        ),
+        atom_to_residue=[0, 0, 1, 2, 3, 4],
+        residue_to_chain=[0, 0, 1, 2, 2],
+    )
+    with pytest.warns(UserWarning, match=r"Not written: atoms\['plddt'\]"):
+        ciffer.write(st, tmp_path / "out.cif")
+    back = ciffer.read(tmp_path / "out.cif")
+
+    assert back.residues.label_seq_id.tolist() == [1, 2, -1, -1, -1]
+    assert back.residues.auth_seq_id.tolist() == ["1", "2", "1", "1", "2"]
+    assert back.chains.auth_asym_id.tolist() == ["A", "B", "C"]
+    assert back.chains.entity_id.tolist() == ["1", "2", "3"]
+    assert back.atoms.occupancy.tolist() == [1.0] * 6
+    assert np.isnan(back.atoms.b_factor).all()
+
+    # A modified residue in a polymer is HETATM, as in PDB entries.
+    block = gemmi.cif.read(str(tmp_path / "out.cif")).sole_block()
+    groups = list(block.find_values("_atom_site.group_PDB"))
+    assert groups == ["ATOM", "ATOM", "HETATM", "HETATM", "HETATM", "HETATM"]
+
+
+def test_write_checks_inputs(tmp_path: Path):
+    st = ciffer.read(DATA / "1G2J.cif.gz")
+
+    with pytest.raises(ValueError, match=r"not a \.cif or \.mmcif file"):
+        ciffer.write(st, tmp_path / "out.txt")
+    with pytest.raises(ValueError, match=r"share label_asym_id \['A', 'B'"):
+        ciffer.write(ciffer.concat([st, st]), tmp_path / "out.cif")
+
+    del st.atoms["element"]
+    with pytest.raises(ValueError, match=r"without \['atoms.element'\]"):
+        ciffer.write(st, tmp_path / "out.cif")

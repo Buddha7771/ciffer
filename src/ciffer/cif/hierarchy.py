@@ -1,17 +1,31 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import gemmi
 import numpy as np
 
 from ciffer.structure import Structure
 from ciffer.table import Table
+from ciffer.view import Field
 
 from .bonds import bond_edges, struct_conn_edges
-from .category import Category, group_rows
+from .category import Category, group_rows, to_cif
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
+    from numpy.typing import ArrayLike, NDArray
+
+    from ciffer.view import View
+
+    Columns = dict[str, NDArray[Any]]
+    Items = dict[str, list[str | bool | None]]
+
+REQUIRED = {
+    "atoms": ["name", "element", "xyz"],
+    "residues": ["name"],
+    "chains": ["label_asym_id", "entity_type"],
+}
+STANDARD_EDGES = {"atoms": ["bond", "struct_conn"]}
 
 
 def from_categories(
@@ -194,3 +208,170 @@ def _atom_table(
         "struct_conn": struct_conn_edges(site, conn),
     }
     return Table(columns, edges=edges)
+
+
+def to_categories(st: Structure) -> dict[str, Items]:
+    """Return the _atom_site, _chem_comp, _entity, and _struct_asym items of ``st``.
+
+    Missing optional fields are filled as ``ciffer.write`` describes.
+
+    Raises
+    ------
+    ValueError
+        If a required field is missing, or two chains share a label_asym_id.
+    """
+    missing = [
+        f"{level}.{name}"
+        for level, names in REQUIRED.items()
+        for name in names
+        if name not in getattr(st, level)
+    ]
+    if missing:
+        msg = f"Cannot write without {missing}."
+        raise ValueError(msg)
+    labels, counts = np.unique(st.chains.label_asym_id, return_counts=True)
+    if (counts > 1).any():
+        msg = f"Chains share label_asym_id {labels[counts > 1].tolist()}."
+        raise ValueError(msg)
+
+    atoms, residues, chains = _filled_tables(st)
+    entities = group_rows(chains["entity_id"])[0]
+    names, first = np.unique(residues["name"], return_index=True)
+    return {
+        "_atom_site.": _atom_site(st, atoms, residues, chains),
+        "_chem_comp.": {
+            "id": to_cif(names),
+            "type": to_cif(residues["comp_type"][first]),
+        },
+        "_entity.": {
+            "id": to_cif(chains["entity_id"][entities]),
+            "type": to_cif(chains["entity_type"][entities]),
+            "pdbx_description": to_cif(chains["description"][entities]),
+        },
+        "_struct_asym.": {
+            "id": to_cif(chains["label_asym_id"]),
+            "entity_id": to_cif(chains["entity_id"]),
+        },
+    }
+
+
+def unwritten(st: Structure) -> list[str]:
+    """Name the columns and edges of ``st`` that are not standard fields.
+
+    Standard columns are the Fields of each view class, such as ``AtomView.xyz``.
+    """
+    names = []
+    for view in (st.atoms, st.residues, st.chains):
+        level = f"{view.level.name.lower()}s"
+        fields = vars(type(view))
+        names += [
+            f"{level}[{name!r}]"
+            for name in view.columns
+            if not isinstance(fields.get(name), Field)
+        ]
+        names += [
+            f"{level}.edges[{name!r}]"
+            for name in view.edges
+            if name not in STANDARD_EDGES.get(level, [])
+        ]
+    return names
+
+
+def _filled_tables(st: Structure) -> tuple[Columns, Columns, Columns]:
+    """Return the standard columns of atoms, residues, and chains, filling defaults."""
+    chains = {
+        "label_asym_id": st.chains.label_asym_id,
+        "entity_type": st.chains.entity_type,
+        **_filled(
+            st.chains,
+            auth_asym_id=st.chains.label_asym_id,
+            entity_id=np.arange(1, len(st.chains) + 1).astype(str),
+            description="",
+        ),
+    }
+
+    # Missing ids number each residue by its place among the residues of its chain:
+    # sorted by chain, a residue's place is its distance from the first of its chain.
+    r2c = st.residue_to_chain
+    order = np.argsort(r2c, kind="stable")
+    first_of_chain = np.searchsorted(r2c[order], r2c[order])
+    place = np.empty(len(r2c), np.intp)
+    place[order] = np.arange(len(r2c)) - first_of_chain + 1
+
+    polymer = chains["entity_type"][r2c] == "polymer"
+    residues = {
+        "name": st.residues.name,
+        **_filled(
+            st.residues,
+            label_seq_id=np.where(polymer, place, -1),
+            ins_code="",
+            comp_type="",
+        ),
+    }
+    # auth_seq_id follows label_seq_id, so it is filled after it.
+    seq = residues["label_seq_id"]
+    residues |= _filled(st.residues, auth_seq_id=np.where(seq > 0, seq, place))
+
+    atoms = {
+        "name": st.atoms.name,
+        "element": st.atoms.element,
+        "xyz": st.atoms.xyz,
+        **_filled(st.atoms, altloc="", occupancy=1.0, b_factor=np.nan, charge=0),
+    }
+    return atoms, residues, chains
+
+
+def _filled(view: View, **defaults: ArrayLike) -> Columns:
+    """Return the named columns of ``view``, with the default of each missing one."""
+    return {
+        name: view[name] if name in view else np.broadcast_to(default, len(view))
+        for name, default in defaults.items()
+    }
+
+
+def _atom_site(
+    st: Structure, atoms: Columns, residues: Columns, chains: Columns
+) -> Items:
+    """Return one _atom_site row per atom."""
+    a2r = st.atom_to_residue
+    a2c = st.residue_to_chain[a2r]
+    name = residues["name"][a2r]
+    seq = residues["label_seq_id"][a2r]
+
+    # Standard residues of polymers are ATOM, as gemmi tabulates them.
+    standard = []
+    for n in np.unique(name).tolist():
+        info = gemmi.find_tabulated_residue(n)
+        if info is not None and info.is_standard():
+            standard.append(n)
+    polymer = chains["entity_type"][a2c] == "polymer"
+    group = np.where(polymer & np.isin(name, standard), "ATOM", "HETATM")
+
+    def _decimals(values: NDArray[np.float64], digits: int) -> list[str | bool | None]:
+        text = np.char.mod(f"%.{digits}f", values)
+        return to_cif(np.where(np.isnan(values), "", text))
+
+    xyz = atoms["xyz"]
+    return {
+        "group_PDB": group.tolist(),
+        "id": to_cif(np.arange(1, len(a2r) + 1)),
+        "type_symbol": to_cif(atoms["element"]),
+        "label_atom_id": to_cif(atoms["name"]),
+        "label_alt_id": to_cif(atoms["altloc"], null=False),
+        "label_comp_id": to_cif(name),
+        "label_asym_id": to_cif(chains["label_asym_id"][a2c]),
+        "label_entity_id": to_cif(chains["entity_id"][a2c]),
+        "label_seq_id": to_cif(np.where(seq > 0, seq.astype(str), ""), null=False),
+        "pdbx_PDB_ins_code": to_cif(residues["ins_code"][a2r]),
+        "Cartn_x": _decimals(xyz[:, 0], 3),
+        "Cartn_y": _decimals(xyz[:, 1], 3),
+        "Cartn_z": _decimals(xyz[:, 2], 3),
+        "occupancy": _decimals(atoms["occupancy"], 2),
+        "B_iso_or_equiv": _decimals(atoms["b_factor"], 2),
+        "pdbx_formal_charge": to_cif(atoms["charge"]),
+        "auth_seq_id": to_cif(residues["auth_seq_id"][a2r]),
+        "auth_comp_id": to_cif(name),
+        "auth_asym_id": to_cif(chains["auth_asym_id"][a2c]),
+        "auth_atom_id": to_cif(atoms["name"]),
+        "pdbx_PDB_model_num": [str(st.metadata.get("model", 1))] * len(a2r),
+    }

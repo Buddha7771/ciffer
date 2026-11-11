@@ -7,7 +7,7 @@ import gemmi
 import numpy as np
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
+    from numpy.typing import ArrayLike, NDArray
 
 
 class Category:
@@ -100,3 +100,18 @@ def group_rows(*columns: NDArray) -> tuple[NDArray[np.intp], NDArray[np.intp]]:
     # np.unique numbers groups by sorted value; renumber them by first row.
     order = np.argsort(first)
     return first[order], np.argsort(order)[group.ravel()]
+
+
+def to_cif(values: ArrayLike, *, null: bool | None = None) -> list[str | bool | None]:
+    """Return ``values`` as text for gemmi, with "" and NaN written as ``null``.
+
+    gemmi writes None as ``?`` (unknown) and False as ``.`` (not applicable).
+
+    >>> to_cif(np.array(["A", ""]))
+    ['A', None]
+    >>> to_cif(np.array([1.5, np.nan]), null=False)
+    ['1.5', False]
+
+    """
+    text = np.asarray(values).astype(str).tolist()
+    return [null if value in ("", "nan") else value for value in text]

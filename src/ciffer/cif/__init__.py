@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import gzip
 import os
+import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, overload
 
 import gemmi
@@ -9,7 +12,7 @@ import numpy as np
 from .altloc import conformer_rows
 from .assembly import assemble
 from .category import Category
-from .hierarchy import from_categories
+from .hierarchy import from_categories, to_categories, unwritten
 from .metadata import entry_metadata
 
 if TYPE_CHECKING:
@@ -143,6 +146,46 @@ def read(
         structures.append(st)
 
     return structures if isinstance(model, list) or model == "all" else structures[0]
+
+
+def write(st: Structure, path: str | os.PathLike[str]) -> None:
+    """Write a structure to an mmCIF file, gzipped if the name ends in .gz.
+
+    Atoms need name, element, and xyz; residues need name; chains need label_asym_id and
+    entity_type. Missing occupancy is written as 1 and charge as 0. Polymer residues
+    without label_seq_id are numbered in order, auth ids follow the label ids, and each
+    chain without entity_id is its own entity. Other missing values are written as
+    unknown (?), and columns that are not standard fields are skipped with a warning.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        st = ciffer.read("input.cif")
+        st.atoms.xyz = predicted
+        ciffer.write(st, "predicted.cif.gz")
+
+    """
+    name = os.fspath(path)
+    if not name.lower().removesuffix(".gz").endswith((".cif", ".mmcif")):
+        msg = f"{name} is not a .cif or .mmcif file, optionally gzipped."
+        raise ValueError(msg)
+
+    doc = gemmi.cif.Document()
+    block = doc.add_new_block(str(st.metadata.get("id", "ciffer")))
+    for category, items in to_categories(st).items():
+        block.set_mmcif_category(category, items)
+
+    skipped = unwritten(st)
+    if skipped:
+        warnings.warn(f"Not written: {', '.join(skipped)}.", stacklevel=2)
+
+    text = doc.as_string()
+    if name.lower().endswith(".gz"):
+        with gzip.open(name, "wt") as file:
+            file.write(text)
+    else:
+        Path(name).write_text(text)
 
 
 def _mmcif_block(path: str | os.PathLike[str]) -> gemmi.cif.Block:
