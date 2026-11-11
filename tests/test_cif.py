@@ -363,6 +363,59 @@ def test_write_metadata(tmp_path: Path):
         ciffer.write(st, path)
 
 
+def test_write_pdb(tmp_path: Path):
+    st = ciffer.read(DATA / "4DWA.cif.gz")
+    with pytest.warns(
+        UserWarning, match=r"atoms.edges\['bond'\], metadata\['authors'\]"
+    ):
+        ciffer.write(st, tmp_path / "out.pdb")
+    back = ciffer.read(tmp_path / "out.pdb")
+
+    # PDB files list each chain with its ligands and waters, so atoms are reordered.
+    def atoms(st: Structure) -> list:
+        a2r = st.atom_to_residue
+        a2c = st.residue_to_chain[a2r]
+        return sorted(
+            zip(
+                st.chains.auth_asym_id[a2c].tolist(),
+                st.residues.auth_seq_id[a2r].tolist(),
+                st.atoms.name.tolist(),
+                st.atoms.altloc.tolist(),
+                np.round(st.atoms.xyz, 3).tolist(),
+                strict=True,
+            )
+        )
+
+    assert atoms(back) == atoms(st)
+    assert len(back.atoms.struct_conn) == len(st.atoms.struct_conn)
+    assert "CRYST1" not in (tmp_path / "out.pdb").read_text()
+
+    st.atoms.struct_conn.type[0] = "hydrog"
+    st.metadata["id"] = "DESIGN1"
+    with pytest.warns(UserWarning, match="Not written") as record:
+        ciffer.write(st, tmp_path / "out.pdb")
+    message = str(record[0].message)
+    assert "chains['description'], 1 hydrogen bonds in struct_conn" in message
+    assert message.endswith("metadata['id'].")
+
+    # Assembly copies keep two-letter chain names, and long residue names come back.
+    st = ciffer.read(DATA / "1G2J.cif.gz", assembly=True)
+    st.residues.name = np.where(st.residues.name == "PYY", "A1LIG", st.residues.name)
+    with pytest.warns(UserWarning, match="Not written"):
+        ciffer.write(st, tmp_path / "out.ent.gz")
+    back = ciffer.read(tmp_path / "out.ent.gz")
+    assert sorted(set(back.chains.auth_asym_id.tolist())) == ["A1", "A2"]
+    assert "A1LIG" in back.residues.name
+
+    # Values wider than PDB columns are refused rather than cut.
+    st.atoms.name = np.where(st.atoms.name == "OP1", "OP1XY", st.atoms.name)
+    with pytest.raises(ValueError, match=r"atom names of up to 4 .* \['OP1XY'\]"):
+        ciffer.write(st, tmp_path / "out.pdb")
+    st.chains.auth_asym_id = np.full(len(st.chains), "ABC")
+    with pytest.raises(ValueError, match=r"chain names of up to 2 .* \['ABC'\]"):
+        ciffer.write(st, tmp_path / "out.pdb")
+
+
 def test_write_fills_optional_fields(tmp_path: Path):
     st = Structure(
         atoms=Table(
@@ -410,7 +463,7 @@ def test_write_fills_optional_fields(tmp_path: Path):
 def test_write_checks_inputs(tmp_path: Path):
     st = ciffer.read(DATA / "1G2J.cif.gz")
 
-    with pytest.raises(ValueError, match=r"not a \.cif or \.mmcif file"):
+    with pytest.raises(ValueError, match=r"not a \.cif, \.mmcif, \.pdb, or \.ent file"):
         ciffer.write(st, tmp_path / "out.txt")
     with pytest.raises(ValueError, match=r"share label_asym_id \['A', 'B'"):
         ciffer.write(ciffer.concat([st, st]), tmp_path / "out.cif")

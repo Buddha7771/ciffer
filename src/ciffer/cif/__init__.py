@@ -16,6 +16,15 @@ from .category import Category
 from .hierarchy import from_categories, to_categories, unwritten
 from .metadata import entry_metadata
 
+# PDB column widths of the _atom_site items gemmi would cut; gemmi writes chain names
+# of two letters in columns 21 and 22.
+PDB_WIDTHS = {
+    "auth_asym_id": ("chain names", 2),
+    "auth_atom_id": ("atom names", 4),
+    "label_alt_id": ("altlocs", 1),
+    "pdbx_PDB_ins_code": ("insertion codes", 1),
+}
+
 if TYPE_CHECKING:
     import os
 
@@ -152,7 +161,7 @@ def read(
 
 
 def write(st: Structure, path: str | os.PathLike[str]) -> None:
-    """Write a structure to an mmCIF file, gzipped if the name ends in .gz.
+    """Write a structure to an mmCIF or PDB file, gzipped if the name ends in .gz.
 
     Parameters
     ----------
@@ -161,14 +170,15 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
         standard columns are filled, and other columns and metadata keys are skipped
         with a warning.
     path: str | os.PathLike[str]
-        A ``.cif`` or ``.mmcif`` file, optionally gzipped.
+        A ``.cif``, ``.mmcif``, ``.pdb``, or ``.ent`` file, optionally gzipped.
 
     Notes
     -----
     Missing chain types are judged from residues, so give them for branched and
     macrolide chains. Missing ``label_seq_id`` numbers each polymer from 1, so give it
     when a polymer has gaps. Readers may give no bonds to residue types that ``bond``
-    leaves out, so give bonds for every residue or for none.
+    leaves out, so give bonds for every residue or for none. Reading a PDB file back
+    assigns label ids and entities anew.
 
     Examples
     --------
@@ -187,8 +197,10 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
         )
         raise TypeError(msg)
     path = Path(path)
-    if not path.name.lower().removesuffix(".gz").endswith((".cif", ".mmcif")):
-        msg = f"{path} is not a .cif or .mmcif file, optionally gzipped."
+    stem = path.name.lower().removesuffix(".gz")
+    as_pdb = stem.endswith((".pdb", ".ent"))
+    if not as_pdb and not stem.endswith((".cif", ".mmcif")):
+        msg = f"{path} is not a .cif, .mmcif, .pdb, or .ent file, optionally gzipped."
         raise ValueError(msg)
 
     doc = gemmi.cif.Document()
@@ -196,14 +208,14 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
     for category, items in to_categories(st).items():
         block.set_mmcif_category(category, items)
 
-    text = doc.as_string()
+    text = _pdb_text(block) if as_pdb else doc.as_string()
     if path.name.lower().endswith(".gz"):
         with gzip.open(path, "wt") as file:
             file.write(text)
     else:
         path.write_text(text)
 
-    skipped = unwritten(st)
+    skipped = unwritten(st, pdb=as_pdb)
     if skipped:
         warnings.warn(f"Not written: {', '.join(skipped)}.", stacklevel=2)
 
@@ -221,3 +233,25 @@ def _mmcif_block(path: str | os.PathLike[str]) -> gemmi.cif.Block:
         return pdb.make_mmcif_document().sole_block()
     msg = f"{path} is not a .cif, .mmcif, .pdb, or .ent file, optionally gzipped."
     raise ValueError(msg)
+
+
+def _pdb_text(block: gemmi.cif.Block) -> str:
+    """Return the PDB text of an mmCIF block, converting it as gemmi does."""
+    site = Category(block, "_atom_site.")
+    for item, (label, width) in PDB_WIDTHS.items():
+        values = np.unique(site.get(item))
+        too_long = values[np.char.str_len(values) > width]
+        if too_long.size:
+            msg = (
+                f"PDB files hold {label} of up to {width} characters, not "
+                f"{too_long[:5].tolist()}; write mmCIF."
+            )
+            raise ValueError(msg)
+
+    pdb = gemmi.make_structure_from_block(block)
+    # Residue names longer than three letters get short codes, with the real ones in
+    # HET records, which gemmi reads back.
+    pdb.shorten_ccd_codes()
+    options = gemmi.PdbWriteOptions()
+    options.cryst1_record = False  # a structure has no unit cell
+    return pdb.make_pdb_string(options)
