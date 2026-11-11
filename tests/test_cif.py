@@ -305,10 +305,12 @@ def test_bad_options_raise(options: dict[str, Any], message: str):
         ("1EJG.cif.gz", {}),  # two residue types at one position
         ("1STP.cif.gz", {"assembly": True}),  # ligand chains before polymer chains
         ("4DWA.cif.gz", {}),  # glycans, disulfides, and hydrogen bonds
+        ("1EJG.cif.gz", {"altloc": None}),  # Thr 39 keeps CB of A and HB of B
     ],
 )
 def test_write_round_trip(tmp_path: Path, name: str, options: dict[str, Any]):
-    st = ciffer.read(DATA / name, altloc="all", **options)
+    options = {"altloc": "all"} | options
+    st = ciffer.read(DATA / name, **options)
     ciffer.write(st, tmp_path / "out.cif.gz")
     back = ciffer.read(tmp_path / "out.cif.gz", altloc="all")
 

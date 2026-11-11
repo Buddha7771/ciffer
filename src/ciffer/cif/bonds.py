@@ -161,8 +161,13 @@ def comp_bond_category(
         )
         raise ValueError(msg)
 
-    # Readers give a listed bond to every residue of its type with both atoms.
-    present = set(zip(a2r.tolist(), atoms["name"].tolist(), strict=True))
+    # Readers give a listed bond to every residue of its type with both atoms in one
+    # altloc, and an atom without an altloc is in every altloc.
+    altlocs: dict[tuple[int, str], set[str]] = {}
+    for key in zip(
+        a2r.tolist(), atoms["name"].tolist(), atoms["altloc"].tolist(), strict=True
+    ):
+        altlocs.setdefault(key[:2], set()).add(key[2])
     bonded = set(zip(residue.tolist(), pair.tolist(), strict=True))
     holders = {
         name: np.flatnonzero(residues["name"] == name).tolist()
@@ -171,7 +176,9 @@ def comp_bond_category(
     for k, row in enumerate(rows.tolist()):
         a, b = low[row], high[row]
         for r in holders[comp[row]]:
-            if (r, a) in present and (r, b) in present and (r, k) not in bonded:
+            ends = altlocs.get((r, a), set()), altlocs.get((r, b), set())
+            meet = all(ends) and ("" in ends[0] | ends[1] or ends[0] & ends[1])
+            if meet and (r, k) not in bonded:
                 msg = (
                     f"Residue {r} lacks the bond {a}-{b} that other {comp[row]} "
                     "residues have."
