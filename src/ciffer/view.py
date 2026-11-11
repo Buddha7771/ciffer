@@ -30,6 +30,7 @@ class Field:
 
         class AtomView(View):
             xyz = Field()
+            'Coordinates in Å, of shape (n_atoms, 3).'  # shown on editor hover
 
         st.atoms.xyz  # st.atoms["xyz"]
 
@@ -110,6 +111,18 @@ class View:
         self.structure = structure
         self.table = structure.tables[self.level]
         self._indices = indices
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Refuse new attributes, so that a misspelled field does not pass silently."""
+        in_init = name in ("structure", "table", "_indices")  # what __init__ sets
+        settable = isinstance(getattr(type(self), name, None), (Field, property))
+        if not in_init and not settable:
+            msg = (
+                f"{type(self).__name__} has no {name!r} field; "
+                f"set other columns with view[{name!r}] = value."
+            )
+            raise AttributeError(msg)
+        super().__setattr__(name, value)
 
     @property
     def indices(self) -> NDArray[np.integer]:
@@ -256,7 +269,7 @@ class View:
             msg = f"{type(self).__name__} has no {name!r} edges."
             raise AttributeError(msg)
         group = kind.__new__(kind)
-        group.__dict__ = self.edges[name].__dict__
+        vars(group).update(vars(self.edges[name]))  # the same src, dst, and columns
         return group
 
 
@@ -267,12 +280,19 @@ class AtomView(View):
     level = Level.ATOM
 
     name = Field()
+    """Atom name, such as "CA"."""
     element = Field()
+    """Element symbol, such as "C" or "FE"."""
     altloc = Field()
+    """Alternative location, such as "A"; "" for none."""
     occupancy = Field()
+    """Occupancy; NaN where the file has none."""
     b_factor = Field()
+    """B-factor in Å²; NaN where the file has none."""
     charge = Field()
+    """Formal charge; 0 where the file has none."""
     xyz = Field()
+    """Coordinates in Å, of shape (n_atoms, 3)."""
 
     @property
     def bond(self) -> Bond:
@@ -292,10 +312,15 @@ class ResidueView(View):
     level = Level.RESIDUE
 
     name = Field()
+    """Residue name, such as "ALA" or "HOH"."""
     label_seq_id = Field()
+    """Position in the polymer sequence, from 1; -1 for residues outside it."""
     auth_seq_id = Field()
+    """Residue number the authors gave, as text such as "50" or "-3"."""
     ins_code = Field()
+    """Insertion code, such as "A"; "" for none."""
     comp_type = Field()
+    """Chemical component type, such as "L-peptide linking"; "" if unknown."""
 
 
 class ChainView(View):
@@ -305,11 +330,21 @@ class ChainView(View):
     level = Level.CHAIN
 
     label_asym_id = Field()
+    """Chain id, unique to each chain."""
     auth_asym_id = Field()
+    """Chain id the authors gave; a polymer and its ligands and waters can share it."""
     entity_id = Field()
+    """Id of the molecule the chain is a copy of."""
     entity_type = Field()
+    """"polymer", "non-polymer", "branched", "macrolide", or "water"; "" if unknown."""
     polymer_type = Field()
+    """"polypeptide(L)", "polypeptide(D)", "polyribonucleotide",
+    "polydeoxyribonucleotide", "polydeoxyribonucleotide/polyribonucleotide hybrid",
+    "cyclic-pseudo-peptide", "peptide nucleic acid", or "other"; "" if unknown or not
+    a polymer.
+    """
     description = Field()
+    """Name of the molecule, such as "STREPTAVIDIN"; "" where the file has none."""
 
 
 class Bond(EdgeList):
@@ -318,7 +353,9 @@ class Bond(EdgeList):
     __module__ = "ciffer"
 
     order = Field()
+    """1, 2, 3, or 4 for single to quadruple bonds, else 0."""
     aromatic = Field()
+    """Whether the bond is aromatic; ``order`` is then 1 or 2, in Kekulé form."""
 
 
 class StructConn(EdgeList):
@@ -327,4 +364,6 @@ class StructConn(EdgeList):
     __module__ = "ciffer"
 
     type = Field()
+    """Connection type, such as "disulf", "covale", or "metalc"."""
     order = Field()
+    """1, 2, 3, or 4 for single to quadruple bonds, else 0."""

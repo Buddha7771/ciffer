@@ -44,9 +44,17 @@ class Structure:
     .. code-block:: python
 
         st = Structure(
-            atoms=Table({"name": ["N", "CA", "C"], "xyz": xyz}),
+            atoms=Table(
+                {"name": ["N", "CA", "C"], "element": ["N", "C", "C"], "xyz": xyz}
+            ),
             residues=Table({"name": ["ALA"]}),
-            chains=Table({"id": ["A"]}),
+            chains=Table(
+                {
+                    "label_asym_id": ["A"],
+                    "entity_type": ["polymer"],
+                    "polymer_type": ["polypeptide(L)"],
+                }
+            ),
             atom_to_residue=[0, 0, 0],
             residue_to_chain=[0],
             metadata={"id": "1abc"},
@@ -97,6 +105,13 @@ class Structure:
             "residue_to_chain", residue_to_chain, len(residues), len(chains)
         )
         self.metadata: dict[str, Any] = metadata if metadata is not None else {}
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Refuse new attributes, so that a misspelled one does not pass silently."""
+        if name not in ("tables", "atom_to_residue", "residue_to_chain", "metadata"):
+            msg = f"Structure has no {name!r} attribute; keep other values in metadata."
+            raise AttributeError(msg)
+        super().__setattr__(name, value)
 
     @property
     def atoms(self) -> AtomView:

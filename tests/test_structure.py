@@ -102,6 +102,12 @@ def test_standard_columns_as_attributes(st: Structure):
     with pytest.raises(AttributeError, match="no 'label_asym_id' column"):
         _ = st.chains.label_asym_id
 
+    # Other names are columns only through [], so a misspelled field is not lost.
+    with pytest.raises(AttributeError, match=r"no 'plddt' field; .* view\['plddt'\]"):
+        st.atoms.plddt = 0.0
+    with pytest.raises(AttributeError, match="no 'metdata' attribute"):
+        st.metdata = {}
+
 
 def test_standard_edges_as_attributes(st: Structure):
     st.atoms.bond.order[0] = 3
@@ -110,6 +116,9 @@ def test_standard_edges_as_attributes(st: Structure):
     bond = st.atoms[[4, 3, 0]].bond
     assert list(zip(bond.src, bond.dst, strict=True)) == [(1, 0)]
     assert not hasattr(st.atoms, "struct_conn")
+
+    with pytest.raises(AttributeError, match=r"no 'ordr' field; .* edges\['ordr'\]"):
+        st.atoms.bond.ordr = 2
 
 
 def test_level_conversion_uses_stored_order(st: Structure):

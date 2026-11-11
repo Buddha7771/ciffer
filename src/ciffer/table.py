@@ -222,6 +222,19 @@ class EdgeList:
         for name, value in (columns or {}).items():
             self[name] = value
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Refuse new attributes, so that a misspelled field does not pass silently."""
+        in_init = name in ("_src", "_dst", "_values")  # what __init__ sets
+        # Fields of subclasses, such as Bond.order, define __set__.
+        settable = hasattr(getattr(type(self), name, None), "__set__")
+        if not in_init and not settable:
+            msg = (
+                f"{type(self).__name__} has no {name!r} field; "
+                f"set other columns with edges[{name!r}] = value."
+            )
+            raise AttributeError(msg)
+        super().__setattr__(name, value)
+
     @property
     def src(self) -> NDArray[np.intp]:
         """Row index of the first end of each edge."""
