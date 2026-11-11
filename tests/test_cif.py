@@ -207,6 +207,7 @@ def test_read_assembly():
     assert st.metadata["assembly"] == "1"
     assert "assembly" not in deposited.metadata
     assert ciffer.read(DATA / "1G2J.cif.gz", assembly=True).metadata["assembly"] == "1"
+    assert ciffer.read(DATA / "1G2J.cif.gz", assembly=1).metadata["assembly"] == "1"
 
     # (P)(61-88) moves the unit made by operators 61 to 88 as a whole.
     unit = ciffer.read(DATA / "1M4X.cif.gz", assembly="2").atoms.xyz

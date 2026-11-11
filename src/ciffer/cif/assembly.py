@@ -11,6 +11,24 @@ if TYPE_CHECKING:
     from .category import Category
 
 
+def chosen_assembly(assemblies: list[str], *, assembly: bool | int | str) -> str | None:
+    """Return the assembly id to build, or None to keep the deposited chains.
+
+    >>> chosen_assembly(["1", "2"], assembly=True)
+    '1'
+    >>> chosen_assembly(["1", "2"], assembly=2)
+    '2'
+    >>> chosen_assembly([], assembly=True) is None
+    True
+
+    """
+    if assembly is False:
+        return None
+    if assembly is True:
+        return assemblies[0] if assemblies else None
+    return str(assembly)  # ids are text, but users write 1 for "1"
+
+
 def assemble(
     st: Structure, assembly_id: str, *, gen: Category, oper: Category
 ) -> Structure:

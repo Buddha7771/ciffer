@@ -10,7 +10,7 @@ import gemmi
 import numpy as np
 
 from .altloc import conformer_rows
-from .assembly import assemble
+from .assembly import assemble, chosen_assembly
 from .category import Category
 from .hierarchy import from_categories, to_categories, unwritten
 from .metadata import entry_metadata
@@ -25,7 +25,7 @@ def read(
     *,
     model: int | None = None,
     altloc: Literal["occupancy", "all"] | None = None,
-    assembly: bool | str = False,
+    assembly: bool | int | str = False,
 ) -> Structure: ...
 
 
@@ -35,7 +35,7 @@ def read(
     *,
     model: list[int] | Literal["all"],
     altloc: Literal["occupancy", "all"] | None = None,
-    assembly: bool | str = False,
+    assembly: bool | int | str = False,
 ) -> list[Structure]: ...
 
 
@@ -44,7 +44,7 @@ def read(
     *,
     model: int | list[int] | Literal["all"] | None = None,
     altloc: Literal["occupancy", "all"] | None = None,
-    assembly: bool | str = False,
+    assembly: bool | int | str = False,
 ) -> Structure | list[Structure]:
     """Read an mmCIF or PDB file.
 
@@ -63,9 +63,10 @@ def read(
         None keeps the first conformer as gemmi does. ``"occupancy"`` keeps, at each
         residue position, the altloc with the highest total occupancy as biotite does.
         ``"all"`` keeps every alternative location.
-    assembly: bool | str, optional
-        Assembly id to build. True builds the first assembly of the file, or keeps the
-        deposited chains if the file has none; ``metadata["assembly"]`` tells which.
+    assembly: bool | int | str, optional
+        Assembly id to build, such as ``"1"`` or ``1``. True builds the first assembly
+        of the file, or keeps the deposited chains if the file has none;
+        ``metadata["assembly"]`` tells which.
 
     Returns
     -------
@@ -121,8 +122,7 @@ def read(
         raise ValueError(msg)
 
     assemblies = list(dict.fromkeys(gen.get("assembly_id").tolist()))
-    if assembly is True:
-        assembly = assemblies[0] if assemblies else False
+    assembly_id = chosen_assembly(assemblies, assembly=assembly)
 
     structures = []
     for number in chosen:
@@ -139,9 +139,9 @@ def read(
             conn=conn,
         )
         metadata = {**entry_metadata(block), "model": number, "models": models.copy()}
-        if isinstance(assembly, str):
-            st = assemble(st, assembly, gen=gen, oper=oper)
-            metadata["assembly"] = assembly
+        if assembly_id is not None:
+            st = assemble(st, assembly_id, gen=gen, oper=oper)
+            metadata["assembly"] = assembly_id
         if assemblies:
             metadata["assemblies"] = assemblies.copy()
         st.metadata = metadata
