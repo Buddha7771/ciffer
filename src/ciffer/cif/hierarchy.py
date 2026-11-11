@@ -20,12 +20,28 @@ if TYPE_CHECKING:
     Columns = dict[str, NDArray[Any]]
     Items = dict[str, list[str | bool | None]]
 
-REQUIRED = {
-    "atoms": ["name", "element", "xyz"],
-    "residues": ["name"],
-    "chains": ["label_asym_id", "entity_type"],
+REQUIRED = {"atoms": ["name", "element", "xyz"], "residues": ["name"]}
+# The values of _entity.type.
+ENTITY_TYPES = {"polymer", "non-polymer", "branched", "macrolide", "water"}
+# The values of _entity_poly.type.
+POLYMER_TYPES = {
+    "polypeptide(L)",
+    "polypeptide(D)",
+    "polyribonucleotide",
+    "polydeoxyribonucleotide",
+    "polydeoxyribonucleotide/polyribonucleotide hybrid",
+    "cyclic-pseudo-peptide",
+    "peptide nucleic acid",
+    "other",
 }
-WRITTEN_EDGES: dict[str, list[str]] = {}
+# The polymer types gemmi infers from residues.
+GEMMI_POLYMER_TYPES = {
+    gemmi.PolymerType.PeptideL: "polypeptide(L)",
+    gemmi.PolymerType.PeptideD: "polypeptide(D)",
+    gemmi.PolymerType.Rna: "polyribonucleotide",
+    gemmi.PolymerType.Dna: "polydeoxyribonucleotide",
+    gemmi.PolymerType.DnaRnaHybrid: "polydeoxyribonucleotide/polyribonucleotide hybrid",
+}
 
 
 def from_categories(
@@ -223,36 +239,14 @@ def _atom_table(
 def to_categories(st: Structure) -> dict[str, Items]:
     """Return the gemmi items of each mmCIF category, keyed like ``"_atom_site."``.
 
-    Missing optional fields are filled as ``ciffer.write`` describes.
-
     Raises
     ------
     ValueError
-        If ``st`` has no atoms, a required field is missing, a coordinate is NaN, or two
-        chains share a label_asym_id.
+        If ``st`` cannot be written, naming why.
     """
-    if not len(st.atoms):
-        msg = "Cannot write a structure with no atoms."
-        raise ValueError(msg)
-    missing = [
-        f"{level}.{name}"
-        for level, names in REQUIRED.items()
-        for name in names
-        if name not in getattr(st, level)
-    ]
-    if missing:
-        msg = f"Cannot write without {missing}."
-        raise ValueError(msg)
-    unplaced = np.isnan(st.atoms.xyz).any(axis=1)
-    if unplaced.any():
-        msg = f"{int(unplaced.sum())} atoms have NaN coordinates; remove them first."
-        raise ValueError(msg)
-    labels, counts = np.unique(st.chains.label_asym_id, return_counts=True)
-    if (counts > 1).any():
-        msg = f"Chains share label_asym_id {labels[counts > 1].tolist()}."
-        raise ValueError(msg)
-
+    _check_writable(st)
     atoms, residues, chains = _filled_tables(st)
+    _check_types(chains)
     entity_chains = group_rows(chains["entity_id"])[0]
     names, first_of_name = np.unique(residues["name"], return_index=True)
     return {
@@ -272,6 +266,56 @@ def to_categories(st: Structure) -> dict[str, Items]:
         },
         **_sequences(st, residues, chains),
     }
+
+
+def _check_writable(st: Structure) -> None:
+    """Raise ValueError naming the first reason ``st`` cannot be written."""
+    if not len(st.atoms):
+        msg = "Cannot write a structure with no atoms."
+        raise ValueError(msg)
+    missing = [
+        f"{level}.{name}"
+        for level, names in REQUIRED.items()
+        for name in names
+        if name not in getattr(st, level)
+    ]
+    if missing:
+        msg = f"Cannot write without {missing}."
+        raise ValueError(msg)
+
+    xyz = st.atoms.xyz
+    if xyz.shape != (len(st.atoms), 3):
+        msg = f"xyz must have shape (n_atoms, 3), not {xyz.shape}."
+        raise ValueError(msg)
+    unplaced = ~np.isfinite(xyz).all(axis=1)
+    if unplaced.any():
+        msg = (
+            f"{int(unplaced.sum())} atoms have NaN or infinite coordinates; drop them "
+            "with st.atoms[np.isfinite(st.atoms.xyz).all(axis=1)].extract()."
+        )
+        raise ValueError(msg)
+
+    if "label_asym_id" in st.chains:
+        labels, counts = np.unique(st.chains.label_asym_id, return_counts=True)
+        if (counts > 1).any():
+            msg = f"Chains share label_asym_id {labels[counts > 1].tolist()}."
+            raise ValueError(msg)
+
+
+def _check_types(chains: Columns) -> None:
+    """Raise ValueError if a chain type, given or inferred, cannot be written."""
+    unknown = sorted(set(chains["entity_type"].tolist()) - ENTITY_TYPES)
+    if unknown:
+        msg = f"entity_type {unknown} is not one of {sorted(ENTITY_TYPES)}."
+        raise ValueError(msg)
+    polymer = chains["entity_type"] == "polymer"
+    lacking = polymer & ~np.isin(chains["polymer_type"], sorted(POLYMER_TYPES))
+    if lacking.any():
+        msg = (
+            f"Polymer chains {chains['label_asym_id'][lacking].tolist()} need a "
+            f"polymer_type, one of {sorted(POLYMER_TYPES)}."
+        )
+        raise ValueError(msg)
 
 
 def _sequences(st: Structure, residues: Columns, chains: Columns) -> dict[str, Items]:
@@ -401,24 +445,29 @@ def unwritten(st: Structure) -> list[str]:
         names += [
             f"{level}.edges[{name!r}]"
             for name, edges in view.edges.items()
-            if len(edges) and name not in WRITTEN_EDGES.get(level, [])
+            if len(edges)
         ]
     return names
 
 
 def _filled_tables(st: Structure) -> tuple[Columns, Columns, Columns]:
     """Return the standard columns of atoms, residues, and chains, filling defaults."""
-    chains = {
-        "label_asym_id": st.chains.label_asym_id,
-        "entity_type": st.chains.entity_type,
-        **_filled(
-            st.chains,
-            auth_asym_id=st.chains.label_asym_id,
-            entity_id=np.arange(1, len(st.chains) + 1).astype(str),
-            polymer_type="",
-            description="",
-        ),
-    }
+    chains = _filled(
+        st.chains,
+        label_asym_id=_chain_names(len(st.chains)),
+        entity_type="",
+        entity_id=np.arange(1, len(st.chains) + 1).astype(str),
+        polymer_type="",
+        description="",
+    )
+    # Empty types are inferred, the polymer_type after the entity_type it depends on.
+    entity_type, polymer_type = _inferred_types(st)
+    given_entity, given_polymer = chains["entity_type"], chains["polymer_type"]
+    chains["entity_type"] = np.where(given_entity == "", entity_type, given_entity)
+    untyped = (chains["entity_type"] == "polymer") & (given_polymer == "")
+    chains["polymer_type"] = np.where(untyped, polymer_type, given_polymer)
+    # auth_asym_id follows label_asym_id, so it is filled after it.
+    chains |= _filled(st.chains, auth_asym_id=chains["label_asym_id"])
 
     # Missing ids number each residue by its place among the residues of its chain:
     # sorted by chain, a residue's place is its distance from the first of its chain.
@@ -449,6 +498,57 @@ def _filled_tables(st: Structure) -> tuple[Columns, Columns, Columns]:
         **_filled(st.atoms, altloc="", occupancy=1.0, b_factor=np.nan, charge=0),
     }
     return atoms, residues, chains
+
+
+def _inferred_types(st: Structure) -> tuple[NDArray[np.str_], NDArray[np.str_]]:
+    """Return the entity_type and polymer_type of each chain, judged from its residues.
+
+    A chain is a polymer of the type gemmi's check_polymer_type finds, else water if all
+    its residues are, and non-polymer otherwise. A single residue is never a polymer,
+    and branched and macrolide chains are never inferred.
+    """
+    residues = []
+    for name in st.residues.name.tolist():
+        residue = gemmi.Residue()
+        residue.name = name
+        residues.append(residue)
+    # gemmi counts residues it does not tabulate as amino acids if they have CA, and as
+    # nucleotides if they have P.
+    for i in np.flatnonzero(np.isin(st.atoms.name, ["CA", "P"])).tolist():
+        atom = gemmi.Atom()
+        atom.name = str(st.atoms.name[i])
+        atom.element = gemmi.Element(str(st.atoms.element[i]))
+        residues[st.atom_to_residue[i]].add_atom(atom)
+
+    chains = [gemmi.Chain("") for _ in range(len(st.chains))]
+    for residue, chain in zip(residues, st.residue_to_chain.tolist(), strict=True):
+        chains[chain].add_residue(residue)
+
+    entity_type, polymer_type = [], []
+    for chain in chains:
+        found = GEMMI_POLYMER_TYPES.get(chain.whole().check_polymer_type(), "")
+        water = len(chain) > 0 and all(residue.is_water() for residue in chain)
+        entity_type.append("polymer" if found else "water" if water else "non-polymer")
+        polymer_type.append(found)
+    return np.array(entity_type), np.array(polymer_type)
+
+
+def _chain_names(n: int) -> list[str]:
+    """Return n chain ids as PDB entries name them, the first letter changing fastest.
+
+    >>> names = _chain_names(703)
+    >>> names[24:28], names[50:54], names[-1]
+    (['Y', 'Z', 'AA', 'BA'], ['YA', 'ZA', 'AB', 'BB'], 'AAA')
+
+    """
+    names = []
+    for i in range(n):
+        name, rest = "", i
+        while rest >= 0:
+            name += chr(ord("A") + rest % 26)
+            rest = rest // 26 - 1
+        names.append(name)
+    return names
 
 
 def _filled(view: View, **defaults: ArrayLike) -> Columns:

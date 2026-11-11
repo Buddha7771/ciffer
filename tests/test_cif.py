@@ -330,12 +330,7 @@ def test_write_fills_optional_fields(tmp_path: Path):
             }
         ),
         residues=Table({"name": ["GLY", "MSE", "LIG", "HOH", "HOH"]}),
-        chains=Table(
-            {
-                "label_asym_id": ["A", "B", "C"],
-                "entity_type": ["polymer", "non-polymer", "water"],
-            }
-        ),
+        chains=Table({"description": ["peptide", "ligand", "water"]}),
         atom_to_residue=[0, 0, 1, 2, 3, 4],
         residue_to_chain=[0, 0, 1, 2, 2],
     )
@@ -345,8 +340,11 @@ def test_write_fills_optional_fields(tmp_path: Path):
 
     assert back.residues.label_seq_id.tolist() == [1, 2, -1, -1, -1]
     assert back.residues.auth_seq_id.tolist() == ["1", "2", "1", "1", "2"]
+    assert back.chains.label_asym_id.tolist() == ["A", "B", "C"]
     assert back.chains.auth_asym_id.tolist() == ["A", "B", "C"]
     assert back.chains.entity_id.tolist() == ["1", "2", "3"]
+    assert back.chains.entity_type.tolist() == ["polymer", "non-polymer", "water"]
+    assert back.chains.polymer_type.tolist() == ["polypeptide(L)", "", ""]
     assert back.atoms.occupancy.tolist() == [1.0] * 6
     assert np.isnan(back.atoms.b_factor).all()
 
@@ -367,8 +365,29 @@ def test_write_checks_inputs(tmp_path: Path):
     with pytest.raises(ValueError, match="no atoms"):
         ciffer.write(st.atoms[st.atoms.name == "XX"].extract(), tmp_path / "out.cif")
 
+    with pytest.raises(TypeError, match="write each model of a list to its own"):
+        ciffer.write([st, st], tmp_path / "out.cif")  # ty: ignore[invalid-argument-type]
+
+    proteins = st.copy()
+    proteins.chains.entity_type = "protein"
+    with pytest.raises(ValueError, match=r"entity_type \['protein'\] is not one of"):
+        ciffer.write(proteins, tmp_path / "out.cif")
+
+    # Ligand residues tell no polymer type.
+    untyped = st.copy()
+    untyped.chains.entity_type = "polymer"
+    untyped.chains.polymer_type = ""
+    with pytest.raises(ValueError, match=r"Polymer chains \['B', 'C', 'D'\] need a"):
+        ciffer.write(untyped, tmp_path / "out.cif")
+
+    four_columns = st.copy()
+    four_columns.atoms.xyz = np.zeros((len(st.atoms), 4))
+    with pytest.raises(ValueError, match=r"shape \(n_atoms, 3\)"):
+        ciffer.write(four_columns, tmp_path / "out.cif")
+
     st.atoms.xyz[0] = np.nan
-    with pytest.raises(ValueError, match="1 atoms have NaN coordinates"):
+    st.atoms.xyz[1] = np.inf
+    with pytest.raises(ValueError, match="2 atoms have NaN or infinite coordinates"):
         ciffer.write(st, tmp_path / "out.cif")
 
     del st.atoms["element"]
@@ -387,13 +406,53 @@ def test_write_warns_what_the_file_cannot_hold(tmp_path: Path):
         atoms=Table({"name": ["CA"], "element": ["C"], "xyz": np.zeros((1, 3))}),
         residues=Table({"name": ["GLY", "LIG"]}),
         chains=Table(
-            {"label_asym_id": ["A", "B"], "entity_type": ["polymer", "non-polymer"]}
+            {
+                "label_asym_id": ["A", "B"],
+                "entity_type": ["polymer", "non-polymer"],
+                "polymer_type": ["polypeptide(L)", ""],
+            }
         ),
         atom_to_residue=[0],
         residue_to_chain=[0, 1],
     )
     with pytest.warns(UserWarning, match="1 residues with no atoms outside polymer"):
         ciffer.write(lonely, tmp_path / "out.cif")
+
+
+@pytest.mark.parametrize("name", ["1G2J.cif.gz", "1STP.cif.gz"])
+def test_write_infers_chain_types(tmp_path: Path, name: str):
+    st = ciffer.read(DATA / name)
+    untyped = st.copy()
+    untyped.chains.entity_type = ""  # as from a file without _entity
+    del untyped.chains["polymer_type"]
+    ciffer.write(untyped, tmp_path / "out.cif")
+    back = ciffer.read(tmp_path / "out.cif")
+
+    assert back.chains.entity_type.tolist() == st.chains.entity_type.tolist()
+    assert back.chains.polymer_type.tolist() == st.chains.polymer_type.tolist()
+
+    # A given entity_type keeps the polymer_type inferred.
+    untyped = st.copy()
+    untyped.chains.polymer_type = ""
+    ciffer.write(untyped, tmp_path / "out.cif")
+    back = ciffer.read(tmp_path / "out.cif")
+    assert back.chains.polymer_type.tolist() == st.chains.polymer_type.tolist()
+
+
+def test_write_names_chains_past_z(tmp_path: Path):
+    waters = Structure(
+        atoms=Table(
+            {"name": ["O"] * 28, "element": ["O"] * 28, "xyz": np.zeros((28, 3))}
+        ),
+        residues=Table({"name": ["HOH"] * 28}),
+        chains=Table({"description": ["water"] * 28}),
+        atom_to_residue=range(28),
+        residue_to_chain=range(28),
+    )
+    ciffer.write(waters, tmp_path / "out.cif")
+    back = ciffer.read(tmp_path / "out.cif")
+
+    assert back.chains.label_asym_id.tolist()[24:] == ["Y", "Z", "AA", "BA"]
 
 
 def test_write_polymer_without_sequence_positions(tmp_path: Path):

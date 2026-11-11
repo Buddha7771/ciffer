@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import gzip
-import os
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, overload
 
 import gemmi
 import numpy as np
+
+from ciffer.structure import Structure
 
 from .altloc import conformer_rows
 from .assembly import assemble, chosen_assembly
@@ -16,7 +17,7 @@ from .hierarchy import from_categories, to_categories, unwritten
 from .metadata import entry_metadata
 
 if TYPE_CHECKING:
-    from ciffer.structure import Structure
+    import os
 
 
 @overload
@@ -156,21 +157,16 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
     Parameters
     ----------
     st: Structure
-        Needs atom ``name``, ``element``, and ``xyz``, residue ``name``, and chain
-        ``label_asym_id`` and ``entity_type``. Columns other than standard fields, and
-        residues with no atoms outside polymer sequences, are skipped with a warning.
+        Needs atom ``name``, ``element``, and ``xyz``, and residue ``name``. Missing
+        standard columns are filled, and other columns are skipped with a warning.
     path: str | os.PathLike[str]
         A ``.cif`` or ``.mmcif`` file, optionally gzipped.
 
     Notes
     -----
-    Missing standard fields are written as:
-
-    - ``occupancy`` 1 and ``charge`` 0
-    - ``label_seq_id``: 1, 2, ... along each polymer chain, as if none were missing
-    - ``auth_asym_id``, ``auth_seq_id``: the label ids, or 1, 2, ... along each chain
-    - ``entity_id``: one entity per chain
-    - ``altloc``: none (``.``); others: unknown (``?``)
+    Missing chain types are judged from residues, so give them for branched and
+    macrolide chains. Missing ``label_seq_id`` numbers each polymer from 1, so give it
+    when a polymer has gaps.
 
     Examples
     --------
@@ -178,12 +174,19 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
 
         st = ciffer.read("input.cif")
         st.atoms.xyz = predicted
+        st.atoms.b_factor = plddt
         ciffer.write(st, "predicted.cif.gz")
 
     """
-    name = os.fspath(path)
-    if not name.lower().removesuffix(".gz").endswith((".cif", ".mmcif")):
-        msg = f"{name} is not a .cif or .mmcif file, optionally gzipped."
+    if not isinstance(st, Structure):
+        msg = (
+            f"write takes a Structure, not {type(st).__name__}; extract() a view "
+            "first, or write each model of a list to its own file."
+        )
+        raise TypeError(msg)
+    path = Path(path)
+    if not path.name.lower().removesuffix(".gz").endswith((".cif", ".mmcif")):
+        msg = f"{path} is not a .cif or .mmcif file, optionally gzipped."
         raise ValueError(msg)
 
     doc = gemmi.cif.Document()
@@ -191,28 +194,28 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
     for category, items in to_categories(st).items():
         block.set_mmcif_category(category, items)
 
+    text = doc.as_string()
+    if path.name.lower().endswith(".gz"):
+        with gzip.open(path, "wt") as file:
+            file.write(text)
+    else:
+        path.write_text(text)
+
     skipped = unwritten(st)
     if skipped:
         warnings.warn(f"Not written: {', '.join(skipped)}.", stacklevel=2)
 
-    text = doc.as_string()
-    if name.lower().endswith(".gz"):
-        with gzip.open(name, "wt") as file:
-            file.write(text)
-    else:
-        Path(name).write_text(text)
-
 
 def _mmcif_block(path: str | os.PathLike[str]) -> gemmi.cif.Block:
     """Return the mmCIF block of a file, converting a PDB file as gemmi does."""
-    name = os.fspath(path)
-    stem = name.lower().removesuffix(".gz")
+    path = Path(path)
+    stem = path.name.lower().removesuffix(".gz")
     if stem.endswith((".cif", ".mmcif")):
-        return gemmi.cif.read(name).sole_block()
+        return gemmi.cif.read(str(path)).sole_block()
     if stem.endswith((".pdb", ".ent")):
-        pdb = gemmi.read_structure(name)
+        pdb = gemmi.read_structure(str(path))
         pdb.setup_entities()
         pdb.assign_label_seq_id()
         return pdb.make_mmcif_document().sole_block()
-    msg = f"{name} is not a .cif, .mmcif, .pdb, or .ent file, optionally gzipped."
+    msg = f"{path} is not a .cif, .mmcif, .pdb, or .ent file, optionally gzipped."
     raise ValueError(msg)
