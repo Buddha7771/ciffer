@@ -13,7 +13,7 @@ from ciffer.structure import Structure
 from .altloc import conformer_rows
 from .assembly import assemble, chosen_assembly
 from .category import Category
-from .hierarchy import from_categories, to_categories, unwritten
+from .hierarchy import chain_names, from_categories, to_categories, unwritten
 from .metadata import entry_metadata
 
 # PDB column widths of the _atom_site items gemmi would cut; gemmi writes chain names
@@ -59,8 +59,9 @@ def read(
     """Read an mmCIF or PDB file.
 
     A PDB file is read as gemmi converts it to mmCIF, so it has no residues without
-    atoms and no bonds within residues, and its chains have label ids gemmi assigns.
-    Without SEQRES records, its polymer residues have a label_seq_id of -1.
+    atoms and no bonds within residues. Its chains get label ids A, B, ..., Z, AA, BA,
+    and so on, in the order of the file. Without SEQRES records, its polymer residues
+    have a label_seq_id of -1.
 
     Parameters
     ----------
@@ -229,8 +230,21 @@ def _mmcif_block(path: str | os.PathLike[str]) -> gemmi.cif.Block:
     if stem.endswith((".pdb", ".ent")):
         pdb = gemmi.read_structure(str(path))
         pdb.setup_entities()
+        # gemmi names chains like "Axp" for the polymer of chain A; they are renamed
+        # once over all models, so a chain keeps its name in each.
+        residues = [res for model in pdb for chain in model for res in chain]
+        old = list(dict.fromkeys(res.subchain for res in residues))
+        names = dict(zip(old, chain_names(len(old)), strict=True))
+        for res in residues:
+            res.subchain = names[res.subchain]
+        for entity in pdb.entities:
+            entity.subchains = [names[name] for name in entity.subchains]
         pdb.assign_label_seq_id()
-        return pdb.make_mmcif_document().sole_block()
+        block = pdb.make_mmcif_document().sole_block()
+        # gemmi reads the resolution of REMARK 2 but writes it only with REMARK 3.
+        if pdb.resolution and not len(block.find_values("_refine.ls_d_res_high")):
+            block.set_pair("_refine.ls_d_res_high", str(pdb.resolution))
+        return block
     msg = f"{path} is not a .cif, .mmcif, .pdb, or .ent file, optionally gzipped."
     raise ValueError(msg)
 

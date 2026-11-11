@@ -515,7 +515,7 @@ def _filled_tables(st: Structure) -> tuple[Columns, Columns, Columns]:
     """Return the standard columns of atoms, residues, and chains, filling defaults."""
     chains = _filled(
         st.chains,
-        label_asym_id=_chain_names(len(st.chains)),
+        label_asym_id=chain_names(len(st.chains)),
         entity_type="",
         entity_id=np.arange(1, len(st.chains) + 1).astype(str),
         polymer_type="",
@@ -594,10 +594,10 @@ def _inferred_types(st: Structure) -> tuple[NDArray[np.str_], NDArray[np.str_]]:
     return np.array(entity_type), np.array(polymer_type)
 
 
-def _chain_names(n: int) -> list[str]:
+def chain_names(n: int) -> list[str]:
     """Return n chain ids as PDB entries name them, the first letter changing fastest.
 
-    >>> names = _chain_names(703)
+    >>> names = chain_names(703)
     >>> names[24:28], names[50:54], names[-1]
     (['Y', 'Z', 'AA', 'BA'], ['YA', 'ZA', 'AB', 'BB'], 'AAA')
 

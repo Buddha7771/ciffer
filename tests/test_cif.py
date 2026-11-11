@@ -59,7 +59,6 @@ def ciffer_atoms(st: Structure) -> list:
         ("4DWA.cif.gz", {}),
         ("1STP.cif.gz", {"assembly": "1"}),
         ("1G2J.cif.gz", {"assembly": "1"}),
-        ("1STP.pdb.gz", {"assembly": "1"}),
     ],
 )
 def test_read_matches_gemmi(name: str, options: dict[str, Any]):
@@ -228,8 +227,16 @@ def test_read_pdb_format():
     assert pdb.atoms["name"].tolist() == cif.atoms["name"].tolist()
     assert np.array_equal(pdb.atoms["xyz"], cif.atoms["xyz"])
     assert pdb.chains["entity_type"].tolist() == cif.chains["entity_type"].tolist()
+    assert pdb.chains.label_asym_id.tolist() == cif.chains.label_asym_id.tolist()
     assert len(pdb.residues) == 206
     assert len(pdb.atoms.edges["bond"]) == 0
+
+    # Assembly copies are named as in the mmCIF file.
+    pdb = ciffer.read(DATA / "1STP.pdb.gz", assembly="1")
+    cif = ciffer.read(DATA / "1STP.cif.gz", assembly="1")
+    assert pdb.chains.label_asym_id.tolist() == cif.chains.label_asym_id.tolist()
+    assert pdb.chains.auth_asym_id.tolist() == cif.chains.auth_asym_id.tolist()
+    assert np.array_equal(pdb.atoms.xyz, cif.atoms.xyz)
 
     with pytest.raises(ValueError, match="optionally gzipped"):
         ciffer.read(DATA / "1STP.txt")
@@ -370,6 +377,7 @@ def test_write_pdb(tmp_path: Path):
     ):
         ciffer.write(st, tmp_path / "out.pdb")
     back = ciffer.read(tmp_path / "out.pdb")
+    assert back.metadata["resolution"] == st.metadata["resolution"]  # REMARK 2
 
     # PDB files list each chain with its ligands and waters, so atoms are reordered.
     def atoms(st: Structure) -> list:
