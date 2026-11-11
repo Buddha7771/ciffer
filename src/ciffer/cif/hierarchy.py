@@ -25,7 +25,7 @@ REQUIRED = {
     "residues": ["name"],
     "chains": ["label_asym_id", "entity_type"],
 }
-STANDARD_EDGES = {"atoms": ["bond", "struct_conn"]}
+WRITTEN_EDGES: dict[str, list[str]] = {}
 
 
 def from_categories(
@@ -211,15 +211,19 @@ def _atom_table(
 
 
 def to_categories(st: Structure) -> dict[str, Items]:
-    """Return the _atom_site, _chem_comp, _entity, and _struct_asym items of ``st``.
+    """Return the gemmi items of each mmCIF category, keyed like ``"_atom_site."``.
 
     Missing optional fields are filled as ``ciffer.write`` describes.
 
     Raises
     ------
     ValueError
-        If a required field is missing, or two chains share a label_asym_id.
+        If ``st`` has no atoms, a required field is missing, a coordinate is NaN, or two
+        chains share a label_asym_id.
     """
+    if not len(st.atoms):
+        msg = "Cannot write a structure with no atoms."
+        raise ValueError(msg)
     missing = [
         f"{level}.{name}"
         for level, names in REQUIRED.items()
@@ -229,50 +233,165 @@ def to_categories(st: Structure) -> dict[str, Items]:
     if missing:
         msg = f"Cannot write without {missing}."
         raise ValueError(msg)
+    unplaced = np.isnan(st.atoms.xyz).any(axis=1)
+    if unplaced.any():
+        msg = f"{int(unplaced.sum())} atoms have NaN coordinates; remove them first."
+        raise ValueError(msg)
     labels, counts = np.unique(st.chains.label_asym_id, return_counts=True)
     if (counts > 1).any():
         msg = f"Chains share label_asym_id {labels[counts > 1].tolist()}."
         raise ValueError(msg)
 
     atoms, residues, chains = _filled_tables(st)
-    entities = group_rows(chains["entity_id"])[0]
-    names, first = np.unique(residues["name"], return_index=True)
+    entity_chains = group_rows(chains["entity_id"])[0]
+    names, first_of_name = np.unique(residues["name"], return_index=True)
     return {
         "_atom_site.": _atom_site(st, atoms, residues, chains),
         "_chem_comp.": {
             "id": to_cif(names),
-            "type": to_cif(residues["comp_type"][first]),
+            "type": to_cif(residues["comp_type"][first_of_name]),
         },
         "_entity.": {
-            "id": to_cif(chains["entity_id"][entities]),
-            "type": to_cif(chains["entity_type"][entities]),
-            "pdbx_description": to_cif(chains["description"][entities]),
+            "id": to_cif(chains["entity_id"][entity_chains]),
+            "type": to_cif(chains["entity_type"][entity_chains]),
+            "pdbx_description": to_cif(chains["description"][entity_chains]),
         },
         "_struct_asym.": {
             "id": to_cif(chains["label_asym_id"]),
             "entity_id": to_cif(chains["entity_id"]),
         },
+        **_sequences(st, residues, chains),
     }
 
 
-def unwritten(st: Structure) -> list[str]:
-    """Name the columns and edges of ``st`` that are not standard fields.
+def _sequences(st: Structure, residues: Columns, chains: Columns) -> dict[str, Items]:
+    """Return _entity_poly, _entity_poly_seq, and _pdbx_poly_seq_scheme of polymers.
 
-    Standard columns are the Fields of each view class, such as ``AtomView.xyz``.
+    Polymer residues with a label_seq_id are listed, with or without atoms, and the
+    first chain listing residues of an entity gives the entity sequence. Residue types
+    sharing a position (microheterogeneity) are marked hetero, and the first one is in
+    the one-letter sequence.
     """
-    names = []
+    polymer_chains = np.flatnonzero(chains["entity_type"] == "polymer")
+    if not polymer_chains.size:
+        return {}
+    # The first polymer chain of each entity gives its type.
+    entity_chains = polymer_chains[group_rows(chains["entity_id"][polymer_chains])[0]]
+    entity_ids = chains["entity_id"][entity_chains].tolist()
+    items: dict[str, Items] = {
+        "_entity_poly.": {
+            "entity_id": to_cif(entity_ids),
+            "type": to_cif(chains["polymer_type"][entity_chains]),
+        }
+    }
+
+    scheme_residues = np.flatnonzero(_in_sequence(st, residues, chains))
+    if not scheme_residues.size:
+        return items
+    chain = st.residue_to_chain[scheme_residues]
+    seq = residues["label_seq_id"][scheme_residues]
+    name = residues["name"][scheme_residues]
+    position_first, position = group_rows(chain, seq)
+    # A position listed more than once holds several residue types.
+    hetero = np.where(np.bincount(position)[position] > 1, "y", "n")
+
+    # The first chain listing residues of each entity gives its sequence.
+    sequence_chains = chain[group_rows(chains["entity_id"][chain])[0]]
+    in_sequence_chain = np.isin(chain, sequence_chains)
+    code, canonical = {}, {}
+    for sequence_chain in sequence_chains.tolist():
+        sequence_names = name[position_first[chain[position_first] == sequence_chain]]
+        entity = chains["entity_id"][sequence_chain]
+        polymer_type = str(chains["polymer_type"][sequence_chain])
+        code[entity], canonical[entity] = _one_letter(sequence_names, polymer_type)
+    items["_entity_poly."] |= {
+        "pdbx_seq_one_letter_code": [code.get(e) for e in entity_ids],
+        "pdbx_seq_one_letter_code_can": [canonical.get(e) for e in entity_ids],
+    }
+
+    observed = np.bincount(st.atom_to_residue, minlength=len(residues["name"])) > 0
+    observed = observed[scheme_residues]
+    auth_seq = residues["auth_seq_id"][scheme_residues]
+    items["_entity_poly_seq."] = {
+        "entity_id": to_cif(chains["entity_id"][chain[in_sequence_chain]]),
+        "num": to_cif(seq[in_sequence_chain]),
+        "mon_id": to_cif(name[in_sequence_chain]),
+        "hetero": hetero[in_sequence_chain].tolist(),
+    }
+    items["_pdbx_poly_seq_scheme."] = {
+        "asym_id": to_cif(chains["label_asym_id"][chain]),
+        "entity_id": to_cif(chains["entity_id"][chain]),
+        "seq_id": to_cif(seq),
+        "mon_id": to_cif(name),
+        "pdb_seq_num": to_cif(auth_seq),
+        "auth_seq_num": to_cif(np.where(observed, auth_seq, "")),
+        "pdb_mon_id": to_cif(np.where(observed, name, "")),
+        "auth_mon_id": to_cif(np.where(observed, name, "")),
+        "pdb_strand_id": to_cif(chains["auth_asym_id"][chain]),
+        "pdb_ins_code": to_cif(residues["ins_code"][scheme_residues], null=False),
+        "hetero": hetero.tolist(),
+    }
+    return items
+
+
+def _in_sequence(
+    st: Structure, residues: Columns, chains: Columns
+) -> NDArray[np.bool_]:
+    """Return which residues polymer sequences list: polymer ones with a position."""
+    polymer = chains["entity_type"][st.residue_to_chain] == "polymer"
+    return polymer & (residues["label_seq_id"] > 0)
+
+
+def _one_letter(names: NDArray[np.str_], polymer_type: str) -> tuple[str, str]:
+    """Return the one-letter sequence and its canonical form, as PDB entries write them.
+
+    Standard amino acids and ribonucleotides are letters, and other residues are their
+    names in parentheses. The canonical form uses the parent letter gemmi tabulates, or
+    N for nucleic acids and X otherwise where it has none.
+
+    >>> _one_letter(np.array(["MET", "MSE", "UNK"]), "polypeptide(L)")
+    ('M(MSE)(UNK)', 'MMX')
+    >>> _one_letter(np.array(["DA", "PSU", "G"]), "polydeoxyribonucleotide")
+    ('(DA)(PSU)G', 'AUG')
+
+    """
+    unknown = "N" if "nucleotide" in polymer_type else "X"
+    kinds_with_letters = (gemmi.ResidueKind.AA, gemmi.ResidueKind.RNA)
+    code, canonical = "", ""
+    for name in names.tolist():
+        info = gemmi.find_tabulated_residue(name)
+        # gemmi gives a modified residue its parent letter in lowercase, or " " if none.
+        letter = info.one_letter_code if info is not None else " "
+        lettered = (
+            info is not None and info.is_standard() and info.kind in kinds_with_letters
+        )
+        code += letter if lettered and name != "UNK" else f"({name})"
+        canonical += letter.upper() if letter.strip() else unknown
+    return code, canonical
+
+
+def unwritten(st: Structure) -> list[str]:
+    """Name what ``st`` holds that the file cannot.
+
+    Those are columns that are not standard fields, edge groups with edges, and residues
+    with no atoms outside polymer sequences. Standard columns are the Fields of each
+    view class, such as ``AtomView.xyz``.
+    """
+    _, residues, chains = _filled_tables(st)
+    observed = np.bincount(st.atom_to_residue, minlength=len(st.residues)) > 0
+    lost = int((~observed & ~_in_sequence(st, residues, chains)).sum())
+    names = [f"{lost} residues with no atoms outside polymer sequences"] if lost else []
     for view in (st.atoms, st.residues, st.chains):
         level = f"{view.level.name.lower()}s"
-        fields = vars(type(view))
         names += [
             f"{level}[{name!r}]"
             for name in view.columns
-            if not isinstance(fields.get(name), Field)
+            if not isinstance(getattr(type(view), name, None), Field)
         ]
         names += [
             f"{level}.edges[{name!r}]"
-            for name in view.edges
-            if name not in STANDARD_EDGES.get(level, [])
+            for name, edges in view.edges.items()
+            if len(edges) and name not in WRITTEN_EDGES.get(level, [])
         ]
     return names
 
@@ -286,6 +405,7 @@ def _filled_tables(st: Structure) -> tuple[Columns, Columns, Columns]:
             st.chains,
             auth_asym_id=st.chains.label_asym_id,
             entity_id=np.arange(1, len(st.chains) + 1).astype(str),
+            polymer_type="",
             description="",
         ),
     }
@@ -347,10 +467,6 @@ def _atom_site(
     polymer = chains["entity_type"][a2c] == "polymer"
     group = np.where(polymer & np.isin(name, standard), "ATOM", "HETATM")
 
-    def _decimals(values: NDArray[np.float64], digits: int) -> list[str | bool | None]:
-        text = np.char.mod(f"%.{digits}f", values)
-        return to_cif(np.where(np.isnan(values), "", text))
-
     xyz = atoms["xyz"]
     return {
         "group_PDB": group.tolist(),
@@ -375,3 +491,24 @@ def _atom_site(
         "auth_atom_id": to_cif(atoms["name"]),
         "pdbx_PDB_model_num": [str(st.metadata.get("model", 1))] * len(a2r),
     }
+
+
+def _decimals(values: NDArray[np.float64], digits: int) -> list[str | bool | None]:
+    """Return ``values`` as text, all with the same number of decimals.
+
+    That is the fewest decimals from ``digits`` to five that keep every value, or
+    ``digits`` when the values need more.
+
+    >>> _decimals(np.array([1.5, 2.12345, np.nan]), 3)
+    ['1.50000', '2.12345', None]
+    >>> _decimals(np.array([1.23456789]), 3)
+    ['1.235']
+
+    """
+    for kept in range(digits, 6):
+        # Float noise below 10**-(kept + 3) does not count as another decimal.
+        rounded = np.round(values, kept)
+        noise = 10.0 ** -(kept + 3)
+        if np.allclose(rounded, values, rtol=0, atol=noise, equal_nan=True):
+            return to_cif(np.char.mod(f"%.{kept}f", values))
+    return to_cif(np.char.mod(f"%.{digits}f", values))

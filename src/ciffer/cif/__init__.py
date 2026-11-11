@@ -151,11 +151,24 @@ def read(
 def write(st: Structure, path: str | os.PathLike[str]) -> None:
     """Write a structure to an mmCIF file, gzipped if the name ends in .gz.
 
-    Atoms need name, element, and xyz; residues need name; chains need label_asym_id and
-    entity_type. Missing occupancy is written as 1 and charge as 0. Polymer residues
-    without label_seq_id are numbered in order, auth ids follow the label ids, and each
-    chain without entity_id is its own entity. Other missing values are written as
-    unknown (?), and columns that are not standard fields are skipped with a warning.
+    Parameters
+    ----------
+    st: Structure
+        Needs atom ``name``, ``element``, and ``xyz``, residue ``name``, and chain
+        ``label_asym_id`` and ``entity_type``. Columns other than standard fields, and
+        residues with no atoms outside polymer sequences, are skipped with a warning.
+    path: str | os.PathLike[str]
+        A ``.cif`` or ``.mmcif`` file, optionally gzipped.
+
+    Notes
+    -----
+    Missing standard fields are written as:
+
+    - ``occupancy`` 1 and ``charge`` 0
+    - ``label_seq_id``: 1, 2, ... along each polymer chain, as if none were missing
+    - ``auth_asym_id``, ``auth_seq_id``: the label ids, or 1, 2, ... along each chain
+    - ``entity_id``: one entity per chain
+    - ``altloc``: none (``.``); others: unknown (``?``)
 
     Examples
     --------

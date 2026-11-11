@@ -296,16 +296,23 @@ def test_bad_options_raise(options: dict[str, Any], message: str):
         ciffer.read(DATA / "1STP.cif.gz", **options)
 
 
-def test_write_round_trip(tmp_path: Path):
-    st = ciffer.read(DATA / "1G2J.cif.gz")
+@pytest.mark.parametrize(
+    "name",
+    [
+        "1G2J.cif.gz",  # RNA and ligands
+        "1STP.cif.gz",  # residues with no atoms
+        "1EJG.cif.gz",  # two residue types at one position
+    ],
+)
+def test_write_round_trip(tmp_path: Path, name: str):
+    st = ciffer.read(DATA / name, altloc="all")
     ciffer.write(st, tmp_path / "out.cif.gz")
-    back = ciffer.read(tmp_path / "out.cif.gz")
+    back = ciffer.read(tmp_path / "out.cif.gz", altloc="all")
 
     for ours, theirs in zip(st.tables, back.tables, strict=True):
-        for name in ours.columns:
-            if name != "polymer_type":
-                floats = ours[name].dtype.kind == "f"
-                assert np.array_equal(ours[name], theirs[name], equal_nan=floats)
+        for column in ours.columns:
+            floats = ours[column].dtype.kind == "f"
+            assert np.array_equal(ours[column], theirs[column], equal_nan=floats)
     assert back.atom_to_residue.tolist() == st.atom_to_residue.tolist()
     assert back.residue_to_chain.tolist() == st.residue_to_chain.tolist()
 
@@ -355,6 +362,44 @@ def test_write_checks_inputs(tmp_path: Path):
     with pytest.raises(ValueError, match=r"share label_asym_id \['A', 'B'"):
         ciffer.write(ciffer.concat([st, st]), tmp_path / "out.cif")
 
+    with pytest.raises(ValueError, match="no atoms"):
+        ciffer.write(st.atoms[st.atoms.name == "XX"].extract(), tmp_path / "out.cif")
+
+    st.atoms.xyz[0] = np.nan
+    with pytest.raises(ValueError, match="1 atoms have NaN coordinates"):
+        ciffer.write(st, tmp_path / "out.cif")
+
     del st.atoms["element"]
     with pytest.raises(ValueError, match=r"without \['atoms.element'\]"):
         ciffer.write(st, tmp_path / "out.cif")
+
+
+def test_write_warns_what_the_file_cannot_hold(tmp_path: Path):
+    st = ciffer.read(DATA / "1G2J.cif.gz")
+    st.atoms["plddt"] = 0.0
+    with pytest.warns(UserWarning, match=r"atoms\['plddt'\], atoms.edges\['bond'\]"):
+        ciffer.write(st, tmp_path / "out.cif")
+
+    # A ligand with no atoms has no place in the file.
+    lonely = Structure(
+        atoms=Table({"name": ["CA"], "element": ["C"], "xyz": np.zeros((1, 3))}),
+        residues=Table({"name": ["GLY", "LIG"]}),
+        chains=Table(
+            {"label_asym_id": ["A", "B"], "entity_type": ["polymer", "non-polymer"]}
+        ),
+        atom_to_residue=[0],
+        residue_to_chain=[0, 1],
+    )
+    with pytest.warns(UserWarning, match="1 residues with no atoms outside polymer"):
+        ciffer.write(lonely, tmp_path / "out.cif")
+
+
+def test_write_polymer_without_sequence_positions(tmp_path: Path):
+    # As from a PDB file without SEQRES records.
+    st = ciffer.read(DATA / "1G2J.cif.gz")
+    st.residues.label_seq_id = -1
+    ciffer.write(st, tmp_path / "out.cif")
+    back = ciffer.read(tmp_path / "out.cif")
+
+    assert back.chains.polymer_type.tolist() == st.chains.polymer_type.tolist()
+    assert back.residues.label_seq_id.tolist() == st.residues.label_seq_id.tolist()

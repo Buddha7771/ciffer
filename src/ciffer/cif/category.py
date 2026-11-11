@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import gemmi
 import numpy as np
@@ -102,7 +102,9 @@ def group_rows(*columns: NDArray) -> tuple[NDArray[np.intp], NDArray[np.intp]]:
     return first[order], np.argsort(order)[group.ravel()]
 
 
-def to_cif(values: ArrayLike, *, null: bool | None = None) -> list[str | bool | None]:
+def to_cif(
+    values: ArrayLike, *, null: Literal[False] | None = None
+) -> list[str | bool | None]:
     """Return ``values`` as text for gemmi, with "" and NaN written as ``null``.
 
     gemmi writes None as ``?`` (unknown) and False as ``.`` (not applicable).
