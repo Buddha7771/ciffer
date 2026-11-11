@@ -166,7 +166,8 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
     -----
     Missing chain types are judged from residues, so give them for branched and
     macrolide chains. Missing ``label_seq_id`` numbers each polymer from 1, so give it
-    when a polymer has gaps.
+    when a polymer has gaps. Readers may give no bonds to residue types that ``bond``
+    leaves out, so give bonds for every residue or for none.
 
     Examples
     --------

@@ -6,12 +6,18 @@ import numpy as np
 
 from ciffer.table import EdgeList
 
-from .category import Category, group_rows
+from .category import Category, group_rows, to_cif
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+    from ciffer.structure import Structure
+
+    from .hierarchy import Columns, Items
+
 ORDERS = {"sing": 1, "doub": 2, "trip": 3, "quad": 4}
+# PDB entries write these in lower case in _struct_conn, and upper in _chem_comp_bond.
+ORDER_NAMES = {order: text for text, order in ORDERS.items()}
 
 
 def bond_edges(
@@ -112,6 +118,123 @@ def struct_conn_edges(site: Category, conn: Category) -> EdgeList:
             "order": np.array(order, dtype=np.int64),
         },
     )
+
+
+def comp_bond_category(
+    st: Structure, atoms: Columns, residues: Columns
+) -> dict[str, Items]:
+    """Return ``_chem_comp_bond`` with one row per residue type and atom pair of bonds.
+
+    Bonds between residues are left out, and so is the category when no bonds remain.
+
+    Raises
+    ------
+    ValueError
+        If residues of one type disagree on a bond: they give it different ``order`` or
+        ``aromatic`` values, or one with both atoms lacks it.
+    """
+    bond = st.atoms.edges.get("bond")
+    if bond is None:
+        return {}
+    a2r = st.atom_to_residue
+    within = np.flatnonzero(a2r[bond.src] == a2r[bond.dst])
+    if not within.size:
+        return {}
+    residue = a2r[bond.src[within]]
+    comp = residues["name"][residue]
+    first, second = atoms["name"][bond.src[within]], atoms["name"][bond.dst[within]]
+    order = bond["order"][within] if "order" in bond else np.zeros(len(within), int)
+    aromatic = (
+        bond["aromatic"][within] if "aromatic" in bond else np.zeros(len(within), bool)
+    )
+
+    # A bond is the same whichever end comes first.
+    low, high = np.sort([first, second], axis=0)
+    rows, pair = group_rows(comp, low, high)
+    variants = group_rows(pair, order, aromatic)[0]
+    differing = np.flatnonzero(np.bincount(pair[variants]) > 1)
+    if differing.size:
+        row = rows[differing[0]]
+        msg = (
+            f"Residues {comp[row]} give the bond {first[row]}-{second[row]} different "
+            "order or aromatic values."
+        )
+        raise ValueError(msg)
+
+    # Readers give a listed bond to every residue of its type with both atoms.
+    present = set(zip(a2r.tolist(), atoms["name"].tolist(), strict=True))
+    bonded = set(zip(residue.tolist(), pair.tolist(), strict=True))
+    holders = {
+        name: np.flatnonzero(residues["name"] == name).tolist()
+        for name in np.unique(comp).tolist()
+    }
+    for k, row in enumerate(rows.tolist()):
+        a, b = low[row], high[row]
+        for r in holders[comp[row]]:
+            if (r, a) in present and (r, b) in present and (r, k) not in bonded:
+                msg = (
+                    f"Residue {r} lacks the bond {a}-{b} that other {comp[row]} "
+                    "residues have."
+                )
+                raise ValueError(msg)
+
+    return {
+        "_chem_comp_bond.": {
+            "comp_id": to_cif(comp[rows]),
+            "atom_id_1": to_cif(first[rows]),
+            "atom_id_2": to_cif(second[rows]),
+            "value_order": to_cif(
+                [ORDER_NAMES.get(o, "").upper() for o in order[rows].tolist()]
+            ),
+            "pdbx_aromatic_flag": np.where(aromatic[rows], "Y", "N").tolist(),
+            "pdbx_ordinal": to_cif(np.arange(1, len(rows) + 1)),
+        }
+    }
+
+
+def struct_conn_category(
+    st: Structure, atoms: Columns, residues: Columns, chains: Columns
+) -> dict[str, Items]:
+    """Return ``_struct_conn`` with one row per ``struct_conn`` edge.
+
+    A connection without a type is written as ``covale``.
+    """
+    conn = st.atoms.edges.get("struct_conn")
+    if conn is None or not len(conn):
+        return {}
+    types = conn["type"] if "type" in conn else np.full(len(conn), "")
+    types = np.where(types == "", "covale", types)
+    order = conn["order"] if "order" in conn else np.zeros(len(conn), int)
+
+    # Ids number connections within each type, such as disulf1 and disulf2.
+    counts: dict[str, int] = {}
+    ids = []
+    for kind in types.tolist():
+        counts[kind] = counts.get(kind, 0) + 1
+        ids.append(f"{kind}{counts[kind]}")
+
+    items: Items = {"id": ids, "conn_type_id": to_cif(types)}
+    for p, atom in ((1, conn.src), (2, conn.dst)):
+        residue = st.atom_to_residue[atom]
+        chain = st.residue_to_chain[residue]
+        seq = residues["label_seq_id"][residue]
+        items |= {
+            f"ptnr{p}_label_asym_id": to_cif(chains["label_asym_id"][chain]),
+            f"ptnr{p}_label_comp_id": to_cif(residues["name"][residue]),
+            f"ptnr{p}_label_seq_id": to_cif(
+                np.where(seq > 0, seq.astype(str), ""), null=False
+            ),
+            f"ptnr{p}_label_atom_id": to_cif(atoms["name"][atom]),
+            f"pdbx_ptnr{p}_label_alt_id": to_cif(atoms["altloc"][atom]),
+            f"pdbx_ptnr{p}_PDB_ins_code": to_cif(residues["ins_code"][residue]),
+            # Non-polymers have no label_seq_id, so readers find them by auth_seq_id.
+            f"ptnr{p}_auth_asym_id": to_cif(chains["auth_asym_id"][chain]),
+            f"ptnr{p}_auth_comp_id": to_cif(residues["name"][residue]),
+            f"ptnr{p}_auth_seq_id": to_cif(residues["auth_seq_id"][residue]),
+            f"ptnr{p}_symmetry": ["1_555"] * len(conn),
+        }
+    items["pdbx_value_order"] = to_cif([ORDER_NAMES.get(o, "") for o in order.tolist()])
+    return {"_struct_conn.": items}
 
 
 def _match(

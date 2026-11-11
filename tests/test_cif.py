@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import ciffer
-from ciffer import Structure, Table
+from ciffer import EdgeList, Structure, Table
 
 DATA = Path(__file__).parent / "data"
 
@@ -304,6 +304,7 @@ def test_bad_options_raise(options: dict[str, Any], message: str):
         ("1STP.cif.gz", {}),  # residues with no atoms
         ("1EJG.cif.gz", {}),  # two residue types at one position
         ("1STP.cif.gz", {"assembly": True}),  # ligand chains before polymer chains
+        ("4DWA.cif.gz", {}),  # glycans, disulfides, and hydrogen bonds
     ],
 )
 def test_write_round_trip(tmp_path: Path, name: str, options: dict[str, Any]):
@@ -318,6 +319,13 @@ def test_write_round_trip(tmp_path: Path, name: str, options: dict[str, Any]):
     assert back.atom_to_residue.tolist() == st.atom_to_residue.tolist()
     assert back.residue_to_chain.tolist() == st.residue_to_chain.tolist()
 
+    for group in ("bond", "struct_conn"):
+        ours, theirs = st.atoms.edges[group], back.atoms.edges[group]
+        assert theirs.src.tolist() == ours.src.tolist()
+        assert theirs.dst.tolist() == ours.dst.tolist()
+        for column in ours.columns:
+            assert theirs[column].tolist() == ours[column].tolist()
+
 
 def test_write_fills_optional_fields(tmp_path: Path):
     st = Structure(
@@ -327,14 +335,20 @@ def test_write_fills_optional_fields(tmp_path: Path):
                 "element": ["N", "C", "N", "C", "O", "O"],
                 "xyz": np.zeros((6, 3)),
                 "plddt": np.ones(6),
-            }
+            },
+            edges={
+                "bond": EdgeList([0, 1], [1, 2]),  # the second joins two residues
+                "struct_conn": EdgeList([2], [3]),
+            },
         ),
         residues=Table({"name": ["GLY", "MSE", "LIG", "HOH", "HOH"]}),
         chains=Table({"description": ["peptide", "ligand", "water"]}),
         atom_to_residue=[0, 0, 1, 2, 3, 4],
         residue_to_chain=[0, 0, 1, 2, 2],
     )
-    with pytest.warns(UserWarning, match=r"Not written: atoms\['plddt'\]"):
+    with pytest.warns(
+        UserWarning, match=r"Not written: atoms\['plddt'\], 1 bonds between residues"
+    ):
         ciffer.write(st, tmp_path / "out.cif")
     back = ciffer.read(tmp_path / "out.cif")
 
@@ -347,6 +361,9 @@ def test_write_fills_optional_fields(tmp_path: Path):
     assert back.chains.polymer_type.tolist() == ["polypeptide(L)", "", ""]
     assert back.atoms.occupancy.tolist() == [1.0] * 6
     assert np.isnan(back.atoms.b_factor).all()
+    assert back.atoms.bond.src.tolist() == [0]
+    assert back.atoms.bond.order.tolist() == [0]
+    assert back.atoms.struct_conn.type.tolist() == ["covale"]
 
     # A modified residue in a polymer is HETATM, as in PDB entries.
     block = gemmi.cif.read(str(tmp_path / "out.cif")).sole_block()
@@ -380,6 +397,19 @@ def test_write_checks_inputs(tmp_path: Path):
     with pytest.raises(ValueError, match=r"Polymer chains \['B', 'C', 'D'\] need a"):
         ciffer.write(untyped, tmp_path / "out.cif")
 
+    # Bonds are listed by residue type, so residues of a type must agree.
+    double = st.copy()
+    double.atoms.bond.order[0] = 2
+    with pytest.raises(ValueError, match=r"Residues C give the bond O5'-C5' different"):
+        ciffer.write(double, tmp_path / "out.cif")
+    bond = st.atoms.bond
+    lacking = st.copy()
+    lacking.atoms.edges["bond"] = EdgeList(bond.src[1:], bond.dst[1:])
+    with pytest.raises(
+        ValueError, match=r"lacks the bond C5'-O5' that other C residues"
+    ):
+        ciffer.write(lacking, tmp_path / "out.cif")
+
     four_columns = st.copy()
     four_columns.atoms.xyz = np.zeros((len(st.atoms), 4))
     with pytest.raises(ValueError, match=r"shape \(n_atoms, 3\)"):
@@ -398,7 +428,13 @@ def test_write_checks_inputs(tmp_path: Path):
 def test_write_warns_what_the_file_cannot_hold(tmp_path: Path):
     st = ciffer.read(DATA / "1G2J.cif.gz")
     st.atoms["plddt"] = 0.0
-    with pytest.warns(UserWarning, match=r"atoms\['plddt'\], atoms.edges\['bond'\]"):
+    st.atoms.bond["length"] = 1.5
+    st.atoms.edges["contact"] = EdgeList([0], [1])
+    with pytest.warns(
+        UserWarning,
+        match=r"atoms\['plddt'\], atoms.edges\['bond'\]\['length'\], "
+        r"atoms.edges\['contact'\]",
+    ):
         ciffer.write(st, tmp_path / "out.cif")
 
     # A ligand with no atoms has no place in the file.

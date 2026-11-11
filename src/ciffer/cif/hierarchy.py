@@ -7,9 +7,14 @@ import numpy as np
 
 from ciffer.structure import Structure
 from ciffer.table import Table
-from ciffer.view import Field
+from ciffer.view import Bond, Field, StructConn
 
-from .bonds import bond_edges, struct_conn_edges
+from .bonds import (
+    bond_edges,
+    comp_bond_category,
+    struct_conn_category,
+    struct_conn_edges,
+)
 from .category import Category, group_rows, to_cif
 
 if TYPE_CHECKING:
@@ -21,6 +26,7 @@ if TYPE_CHECKING:
     Items = dict[str, list[str | bool | None]]
 
 REQUIRED = {"atoms": ["name", "element", "xyz"], "residues": ["name"]}
+WRITTEN_EDGES = {("atoms", "bond"): Bond, ("atoms", "struct_conn"): StructConn}
 # The values of _entity.type.
 ENTITY_TYPES = {"polymer", "non-polymer", "branched", "macrolide", "water"}
 # The values of _entity_poly.type.
@@ -265,6 +271,8 @@ def to_categories(st: Structure) -> dict[str, Items]:
             "entity_id": to_cif(chains["entity_id"]),
         },
         **_sequences(st, residues, chains),
+        **comp_bond_category(st, atoms, residues),
+        **struct_conn_category(st, atoms, residues, chains),
     }
 
 
@@ -427,9 +435,10 @@ def _one_letter(names: NDArray[np.str_], polymer_type: str) -> tuple[str, str]:
 def unwritten(st: Structure) -> list[str]:
     """Name what ``st`` holds that the file cannot.
 
-    Those are columns that are not standard fields, edge groups with edges, and residues
-    with no atoms outside polymer sequences. Standard columns are the Fields of each
-    view class, such as ``AtomView.xyz``.
+    Those are columns that are not standard fields, edge groups other than ``bond`` and
+    ``struct_conn``, bonds between residues, and residues with no atoms outside polymer
+    sequences. Standard columns are the Fields of each class, such as ``AtomView.xyz``
+    and ``Bond.order``.
     """
     _, residues, chains = _filled_tables(st)
     observed = np.bincount(st.atom_to_residue, minlength=len(st.residues)) > 0
@@ -442,11 +451,25 @@ def unwritten(st: Structure) -> list[str]:
             for name in view.columns
             if not isinstance(getattr(type(view), name, None), Field)
         ]
-        names += [
-            f"{level}.edges[{name!r}]"
-            for name, edges in view.edges.items()
-            if len(edges)
-        ]
+        for name, edges in view.edges.items():
+            if not len(edges):
+                continue
+            kind = WRITTEN_EDGES.get((level, name))
+            if kind is None:
+                names.append(f"{level}.edges[{name!r}]")
+                continue
+            names += [
+                f"{level}.edges[{name!r}][{column!r}]"
+                for column in edges.columns
+                if not isinstance(getattr(kind, column, None), Field)
+            ]
+
+    # _chem_comp_bond lists bonds by residue type, so it cannot hold these.
+    bond = st.atoms.edges.get("bond")
+    if bond is not None:
+        a2r = st.atom_to_residue
+        between = int((a2r[bond.src] != a2r[bond.dst]).sum())
+        names += [f"{between} bonds between residues"] if between else []
     return names
 
 
