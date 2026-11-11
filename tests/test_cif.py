@@ -11,9 +11,12 @@ from ciffer import Structure
 DATA = Path(__file__).parent / "data"
 
 
-def gemmi_atoms(path: Path, model: int = 1) -> list:
+def gemmi_atoms(path: Path, model: int = 1, assembly: str | None = None) -> list:
     st = gemmi.read_structure(str(path))
     st.remove_alternative_conformations()
+    if assembly is not None:
+        how = gemmi.HowToNameCopiedChain.AddNumber
+        st.transform_to_assembly(assembly, how, merge_dist=0)
     model_ = next(m for m in st if m.num == model)
     return sorted(
         (
@@ -53,6 +56,9 @@ def ciffer_atoms(st: Structure) -> list:
         ("1L2Y_3models.cif.gz", {"model": 2}),
         ("1EJG.cif.gz", {}),
         ("4DWA.cif.gz", {}),
+        ("1STP.cif.gz", {"assembly": "1"}),
+        ("1G2J.cif.gz", {"assembly": "1"}),
+        ("1STP.pdb.gz", {"assembly": "1"}),
     ],
 )
 def test_read_matches_gemmi(name: str, options: dict[str, Any]):
@@ -177,6 +183,8 @@ def test_read_metadata():
         "release_date": "2000-04-05",  # the first of six revisions
         "doi": "10.1073/pnas.97.7.3171",
         "model": 1,
+        "models": [1],
+        "assemblies": ["1"],
     }
 
     # Only values in the file are kept: NMR has no resolution, and 1STP has no DOI.
@@ -184,6 +192,30 @@ def test_read_metadata():
     st = ciffer.read(DATA / "1STP.cif.gz")
     assert "doi" not in st.metadata
     assert st.chains["description"][1] == "BIOTIN"
+
+
+def test_read_assembly():
+    deposited = ciffer.read(DATA / "1G2J.cif.gz")
+    st = ciffer.read(DATA / "1G2J.cif.gz", assembly="1")
+
+    assert st.chains.label_asym_id.tolist() == [
+        *("A1", "B1", "C1", "D1"),
+        *("A2", "B2", "C2", "D2"),
+    ]
+    assert st.chains.auth_asym_id.tolist() == ["A1"] * 4 + ["A2"] * 4
+    assert len(st.atoms.struct_conn) == 2 * len(deposited.atoms.struct_conn)
+    assert st.metadata["assembly"] == "1"
+    assert "assembly" not in deposited.metadata
+    assert ciffer.read(DATA / "1G2J.cif.gz", assembly=True).metadata["assembly"] == "1"
+
+    # (P)(61-88) moves the unit made by operators 61 to 88 as a whole.
+    unit = ciffer.read(DATA / "1M4X.cif.gz", assembly="2").atoms.xyz
+    moved = ciffer.read(DATA / "1M4X.cif.gz", assembly="7").atoms.xyz
+    assert not np.allclose(moved, unit)
+    assert np.allclose(
+        np.linalg.norm(moved - moved[0], axis=1),
+        np.linalg.norm(unit - unit[0], axis=1),
+    )
 
 
 def test_read_pdb_format():
@@ -235,12 +267,16 @@ def test_read_without_optional_items(tmp_path: Path):
     for item in items:
         loop.remove_column(f"_atom_site.{item}")
     block.find_mmcif_category("_pdbx_poly_seq_scheme.").erase()
+    block.find_mmcif_category("_pdbx_struct_assembly_gen.").erase()
     path = tmp_path / "1STP.cif"
     doc.write_file(str(path))
 
-    st = ciffer.read(path)
+    st = ciffer.read(path, assembly=True)
 
     assert st.metadata["model"] == 1
+    assert "assembly" not in st.metadata  # the deposited chains
+    assert "assemblies" not in st.metadata
+    assert len(st.chains) == 3
     assert len(st.residues) == 206  # observed residues only
     assert np.isnan(st.atoms["occupancy"]).all()
     assert np.isnan(st.atoms["b_factor"]).all()
@@ -252,6 +288,7 @@ def test_read_without_optional_items(tmp_path: Path):
     [
         ({"model": 9}, "models are"),
         ({"altloc": "A"}, "altloc must be"),
+        ({"assembly": "9"}, "assemblies are"),
     ],
 )
 def test_bad_options_raise(options: dict[str, Any], message: str):

@@ -7,6 +7,7 @@ import gemmi
 import numpy as np
 
 from .altloc import conformer_rows
+from .assembly import assemble
 from .category import Category
 from .hierarchy import from_categories
 from .metadata import entry_metadata
@@ -21,6 +22,7 @@ def read(
     *,
     model: int | None = None,
     altloc: Literal["occupancy", "all"] | None = None,
+    assembly: bool | str = False,
 ) -> Structure: ...
 
 
@@ -30,6 +32,7 @@ def read(
     *,
     model: list[int] | Literal["all"],
     altloc: Literal["occupancy", "all"] | None = None,
+    assembly: bool | str = False,
 ) -> list[Structure]: ...
 
 
@@ -38,6 +41,7 @@ def read(
     *,
     model: int | list[int] | Literal["all"] | None = None,
     altloc: Literal["occupancy", "all"] | None = None,
+    assembly: bool | str = False,
 ) -> Structure | list[Structure]:
     """Read an mmCIF or PDB file.
 
@@ -56,6 +60,9 @@ def read(
         None keeps the first conformer as gemmi does. ``"occupancy"`` keeps, at each
         residue position, the altloc with the highest total occupancy as biotite does.
         ``"all"`` keeps every alternative location.
+    assembly: bool | str, optional
+        Assembly id to build. True builds the first assembly of the file, or keeps the
+        deposited chains if the file has none; ``metadata["assembly"]`` tells which.
 
     Returns
     -------
@@ -72,25 +79,15 @@ def read(
         ensemble = ciffer.read("2k9q.cif", model="all")
         likely = ciffer.read("1ejg.cif", altloc="occupancy")
         every = ciffer.read("1ejg.cif", altloc="all")
+        tetramer = ciffer.read("1stp.cif", assembly="1")
+        biological = ciffer.read("1stp.cif", assembly=True)
 
     """
     if altloc not in (None, "occupancy", "all"):
         msg = f"altloc must be None, 'occupancy', or 'all', got {altloc!r}."
         raise ValueError(msg)
 
-    name = os.fspath(path)
-    stem = name.lower().removesuffix(".gz")
-    if stem.endswith((".cif", ".mmcif")):
-        block = gemmi.cif.read(name).sole_block()
-    elif stem.endswith((".pdb", ".ent")):
-        pdb = gemmi.read_structure(name)
-        pdb.setup_entities()
-        pdb.assign_label_seq_id()
-        block = pdb.make_mmcif_document().sole_block()
-    else:
-        msg = f"{name} is not a .cif, .mmcif, .pdb, or .ent file, optionally gzipped."
-        raise ValueError(msg)
-
+    block = _mmcif_block(path)
     site = Category(block, "_atom_site.")
     entity = Category(block, "_entity.")
     entity_poly = Category(block, "_entity_poly.")
@@ -98,6 +95,8 @@ def read(
     scheme = Category(block, "_pdbx_poly_seq_scheme.")
     comp_bond = Category(block, "_chem_comp_bond.")
     conn = Category(block, "_struct_conn.")
+    gen = Category(block, "_pdbx_struct_assembly_gen.")
+    oper = Category(block, "_pdbx_struct_oper_list.")
 
     # A file without model numbers holds one model, numbered 1.
     numbers = site.get("pdbx_PDB_model_num")
@@ -117,6 +116,10 @@ def read(
         msg = f"Models {missing} are not in the file; models are {models}."
         raise ValueError(msg)
 
+    assemblies = list(dict.fromkeys(gen.get("assembly_id").tolist()))
+    if assembly is True:
+        assembly = assemblies[0] if assemblies else False
+
     structures = []
     for number in chosen:
         model_site = site.take(np.flatnonzero(numbers == number))
@@ -130,7 +133,28 @@ def read(
             comp_bond=comp_bond,
             conn=conn,
         )
-        st.metadata = {**entry_metadata(block), "model": number}
+        metadata = {**entry_metadata(block), "model": number, "models": models.copy()}
+        if isinstance(assembly, str):
+            st = assemble(st, assembly, gen=gen, oper=oper)
+            metadata["assembly"] = assembly
+        if assemblies:
+            metadata["assemblies"] = assemblies.copy()
+        st.metadata = metadata
         structures.append(st)
 
     return structures if isinstance(model, list) or model == "all" else structures[0]
+
+
+def _mmcif_block(path: str | os.PathLike[str]) -> gemmi.cif.Block:
+    """Return the mmCIF block of a file, converting a PDB file as gemmi does."""
+    name = os.fspath(path)
+    stem = name.lower().removesuffix(".gz")
+    if stem.endswith((".cif", ".mmcif")):
+        return gemmi.cif.read(name).sole_block()
+    if stem.endswith((".pdb", ".ent")):
+        pdb = gemmi.read_structure(name)
+        pdb.setup_entities()
+        pdb.assign_label_seq_id()
+        return pdb.make_mmcif_document().sole_block()
+    msg = f"{name} is not a .cif, .mmcif, .pdb, or .ent file, optionally gzipped."
+    raise ValueError(msg)
