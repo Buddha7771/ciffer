@@ -1,11 +1,22 @@
 [project]
 name = "ciffer"
 version = "0.1.0"
-description = "CIF structures as plain NumPy arrays."
+description = "Biomolecular structures as NumPy tables, ready for ML pipelines."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "Howon Lee", email = "hwlee7771@gmail.com" }]
+keywords = ["mmcif", "pdb", "protein", "structure", "numpy", "machine-learning"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Typing :: Typed",
+]
 dependencies = ["gemmi>=0.7.5", "numpy>=2.2", "zstandard>=0.25.0"]
 
 [project.urls]
