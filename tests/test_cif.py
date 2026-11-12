@@ -1,5 +1,9 @@
 import gzip
+import io
+import urllib.error
+import urllib.request
 import warnings
+from email.message import Message
 from pathlib import Path
 from typing import Any
 
@@ -328,6 +332,60 @@ def test_read_without_optional_items(tmp_path: Path):
 def test_bad_options_raise(options: dict[str, Any], message: str):
     with pytest.raises(ValueError, match=message):
         ciffer.read(DATA / "1STP.cif.gz", **options)
+
+
+def fake_rcsb(monkeypatch: pytest.MonkeyPatch) -> list[urllib.request.Request]:
+    """Serve 1STP for every download, and return the requests made."""
+    requests = []
+
+    def urlopen(request: urllib.request.Request, **_: float) -> io.BytesIO:
+        requests.append(request)
+        return io.BytesIO((DATA / "1STP.cif.gz").read_bytes())
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    return requests
+
+
+def test_fetch_in_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    requests = fake_rcsb(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    st = ciffer.fetch("1STP", assembly="1")
+    expected = ciffer.read(DATA / "1STP.cif.gz", assembly="1")
+
+    assert ciffer_atoms(st) == ciffer_atoms(expected)
+    assert st.metadata == expected.metadata
+    assert requests[0].full_url == "https://files.rcsb.org/download/1STP.cif.gz"
+    assert requests[0].get_header("User-agent") == "ciffer"
+    assert not any(tmp_path.iterdir())
+
+
+def test_fetch_saves_and_reuses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    requests = fake_rcsb(monkeypatch)
+    directory = tmp_path / "data"
+
+    # The file is saved even when the options fail, so a retry reads it.
+    with pytest.raises(ValueError, match="models are"):
+        ciffer.fetch("1STP", directory, model=9)
+    st = ciffer.fetch("1STP", directory, assembly="1")
+
+    assert len(requests) == 1
+    assert [p.name for p in directory.iterdir()] == ["1stp.cif"]
+    plain = gzip.decompress((DATA / "1STP.cif.gz").read_bytes())
+    assert (directory / "1stp.cif").read_bytes() == plain
+    expected = ciffer.read(DATA / "1STP.cif.gz", assembly="1")
+    assert ciffer_atoms(st) == ciffer_atoms(expected)
+
+
+def test_fetch_errors(monkeypatch: pytest.MonkeyPatch):
+    def urlopen(request: urllib.request.Request, **_: float) -> io.BytesIO:
+        raise urllib.error.HTTPError(request.full_url, 404, "", Message(), None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    with pytest.raises(FileNotFoundError, match="No entry '0abc' at RCSB"):
+        ciffer.fetch("0abc")
+    with pytest.raises(ValueError, match="is not a PDB id"):
+        ciffer.fetch("../1stp")
 
 
 @pytest.mark.parametrize(
