@@ -7,7 +7,7 @@ import numpy as np
 
 from ciffer.view import Bond, Field, StructConn
 
-from .category import chain_names, filled
+from .category import chain_names, filled, group_rows
 from .metadata import ENTRY_KEYS
 
 if TYPE_CHECKING:
@@ -230,6 +230,25 @@ def unwritten(st: Structure, residues: Columns, chains: Columns) -> list[str]:
 
 
 def in_sequence(st: Structure, residues: Columns, chains: Columns) -> NDArray[np.bool_]:
-    """Return which residues polymer sequences list: polymer ones with a position."""
-    polymer = chains["entity_type"][st.residue_to_chain] == "polymer"
-    return polymer & (residues["label_seq_id"] > 0)
+    """Return which residues polymer sequences list.
+
+    Those are polymer residues with a label_seq_id, in entities whose chains each
+    number them from 1 to the same end without gaps.
+    """
+    r2c = st.residue_to_chain
+    entity = chains["entity_id"]
+    listed = (chains["entity_type"][r2c] == "polymer") & (residues["label_seq_id"] > 0)
+    rows = np.flatnonzero(listed)
+    chain, seq = r2c[rows], residues["label_seq_id"][rows]
+    # A chain numbered 1 to n without gaps has n positions.
+    positions = np.bincount(chain[group_rows(chain, seq)[0]], minlength=len(entity))
+    last = np.zeros(len(entity), positions.dtype)
+    np.maximum.at(last, chain, seq)
+
+    unsequenced = set(entity[positions != last].tolist())
+    ends: dict[str, set[int]] = {}
+    held = last > 0
+    for entity_id, end in zip(entity[held].tolist(), last[held].tolist(), strict=True):
+        ends.setdefault(entity_id, set()).add(end)
+    unsequenced |= {entity_id for entity_id, end in ends.items() if len(end) > 1}
+    return listed & ~np.isin(entity[r2c], sorted(unsequenced))

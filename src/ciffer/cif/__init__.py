@@ -173,9 +173,10 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
     Notes
     -----
     Missing chain types are judged from residues, so give them for branched and
-    macrolide chains. Missing ``label_seq_id`` numbers each polymer from 1, so give it
-    when a polymer has gaps. Readers may give no bonds to residue types that ``bond``
-    leaves out, so give bonds for every residue or for none.
+    macrolide chains. Missing ``label_seq_id`` numbers each polymer from 1, and an
+    entity whose chains do not each run from 1 to the same end without gaps, as after
+    cropping, is written without its sequence. Readers may give no bonds to residue
+    types that ``bond`` leaves out, so give bonds for every residue or for none.
 
     A PDB file loses, without a warning, bonds, chain descriptions, hydrogen bonds,
     connection orders, and the metadata ``authors``, ``r_free``, ``release_date``, and

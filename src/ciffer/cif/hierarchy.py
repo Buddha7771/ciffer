@@ -255,7 +255,7 @@ def to_categories(
 def _sequences(st: Structure, residues: Columns, chains: Columns) -> dict[str, Items]:
     """Return _entity_poly, _entity_poly_seq, and _pdbx_poly_seq_scheme of polymers.
 
-    Polymer residues with a label_seq_id are listed, with or without atoms, and the
+    The residues ``in_sequence`` selects are listed, with or without atoms, and the
     first chain listing residues of an entity gives the entity sequence. Residue types
     sharing a position (microheterogeneity) are marked hetero, and the first one is in
     the one-letter sequence.

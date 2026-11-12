@@ -611,6 +611,37 @@ def test_write_names_chains_past_z(tmp_path: Path):
     assert back.chains.label_asym_id.tolist()[24:] == ["Y", "Z", "AA", "BA"]
 
 
+def test_write_cropped_polymer(tmp_path: Path):
+    st = ciffer.read(DATA / "1STP.cif.gz")
+    seq = st.residues.label_seq_id
+    path = tmp_path / "crop.cif"
+
+    # Numbering that misses 1 or has gaps tells no whole sequence, so none is written.
+    observed = st.atoms.extract()  # residues 13 to 133
+    holed = st.residues[(seq < 50) | (seq > 54)].atoms.extract()
+    for crop in (observed, holed):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            ciffer.write(crop, path)
+        block = gemmi.cif.read(str(path)).sole_block()
+        assert not len(block.find_values("_entity_poly_seq.num"))
+        back = ciffer.read(path).residues
+        assert back.label_seq_id.tolist() == crop.residues.label_seq_id.tolist()
+
+    # Residues with no atoms are then left without a place.
+    with pytest.warns(UserWarning, match="38 residues with no atoms outside polymer"):
+        ciffer.write(st.residues[(seq < 50) | (seq > 54)].extract(), path)
+
+    # Copies of one entity share its sequence, so they must also end alike.
+    st = ciffer.read(DATA / "1STP.cif.gz", assembly=True)
+    first = np.flatnonzero(st.chains.entity_type == "polymer")[0]
+    last = (st.residue_to_chain == first) & (st.residues.label_seq_id == 159)
+    with pytest.warns(UserWarning, match="151 residues with no atoms"):
+        ciffer.write(st.residues[~last].extract(), path)
+    block = gemmi.cif.read(str(path)).sole_block()
+    assert not len(block.find_values("_entity_poly_seq.num"))
+
+
 def test_write_polymer_without_sequence_positions(tmp_path: Path):
     st = ciffer.read(DATA / "1G2J.cif.gz")
     st.residues.label_seq_id = -1
