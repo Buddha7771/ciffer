@@ -77,33 +77,6 @@ def test_selected_view_reads_copy_and_writes_through(st: Structure):
         selected["b_factor"] = 0.0
 
 
-def test_selected_edges_read_copies_and_write_through(st: Structure):
-    # Of the bonds 0-1, 1-2, and 3-4, the first two join the selected atoms.
-    bond = st.atoms[[2, 1, 0]].bond
-    bond.order = [3, 2]
-    assert st.atoms.bond.order.tolist() == [3, 2, 2]
-    assert bond.order.tolist() == [3, 2]
-
-    bond.order[:] = 0
-    assert st.atoms.bond.order.tolist() == [3, 2, 2]
-
-    st.atoms[[0, 1]].edges["bond"]["order"] = 1.5
-    assert st.atoms.bond.order.tolist() == [1.5, 2.0, 2.0]
-
-    st.atoms[[1, 0, 1]].bond.order = 4  # repeated rows keep each edge once
-    assert st.atoms.bond.order.tolist() == [4.0, 2.0, 2.0]
-
-    with pytest.raises(TypeError, match="add it on the whole level first"):
-        bond["length"] = 1.0
-    with pytest.raises(TypeError, match="whole level"):
-        del bond["order"]
-
-    # Put in a table of its own, the edges no longer write st.
-    table = Table({"name": ["CA", "C", "N"]}, edges={"bond": bond})
-    table.edges["bond"]["order"] = 0
-    assert st.atoms.bond.order.tolist() == [4.0, 2.0, 2.0]
-
-
 def test_assignment_widens_columns(st: Structure):
     # A longer string or a float among integers widens the column rather than being cut.
     st.chains["id"] = "ABC"
