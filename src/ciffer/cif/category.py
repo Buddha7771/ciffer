@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import gemmi
 import numpy as np
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
+
+    from ciffer.table import EdgeList
+    from ciffer.view import View
+
+    Columns = dict[str, NDArray[Any]]
+    Items = dict[str, list[str | bool | None]]
 
 
 class Category:
@@ -117,3 +123,29 @@ def to_cif(
     """
     text = np.asarray(values).astype(str).tolist()
     return [null if value in ("", "nan") else value for value in text]
+
+
+def filled(holder: View | EdgeList, **defaults: ArrayLike) -> Columns:
+    """Return the named columns of ``holder``, with the default of each missing one."""
+    return {
+        name: holder[name] if name in holder else np.broadcast_to(default, len(holder))
+        for name, default in defaults.items()
+    }
+
+
+def chain_names(n: int) -> list[str]:
+    """Return n chain ids as PDB entries name them, the first letter changing fastest.
+
+    >>> names = chain_names(703)
+    >>> names[24:28], names[50:54], names[-1]
+    (['Y', 'Z', 'AA', 'BA'], ['YA', 'ZA', 'AB', 'BB'], 'AAA')
+
+    """
+    names = []
+    for i in range(n):
+        name, rest = "", i
+        while rest >= 0:
+            name += chr(ord("A") + rest % 26)
+            rest = rest // 26 - 1
+        names.append(name)
+    return names

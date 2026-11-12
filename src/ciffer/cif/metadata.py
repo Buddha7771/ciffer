@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
     import gemmi
 
-    from .hierarchy import Items
+    from .category import Items
 
 # The keys entry_metadata reads, which metadata_categories writes back.
 ENTRY_KEYS = {

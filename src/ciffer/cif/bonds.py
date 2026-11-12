@@ -6,14 +6,14 @@ import numpy as np
 
 from ciffer.table import EdgeList
 
-from .category import Category, group_rows, to_cif
+from .category import Category, filled, group_rows, to_cif
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from ciffer.structure import Structure
 
-    from .hierarchy import Columns, Items
+    from .category import Columns, Items
 
 ORDERS = {"sing": 1, "doub": 2, "trip": 3, "quad": 4}
 # PDB entries write these in lower case in _struct_conn, and upper in _chem_comp_bond.
@@ -143,10 +143,8 @@ def comp_bond_category(
     residue = a2r[bond.src[within]]
     comp = residues["name"][residue]
     first, second = atoms["name"][bond.src[within]], atoms["name"][bond.dst[within]]
-    order = bond["order"][within] if "order" in bond else np.zeros(len(within), int)
-    aromatic = (
-        bond["aromatic"][within] if "aromatic" in bond else np.zeros(len(within), bool)
-    )
+    values = filled(bond, order=0, aromatic=False)
+    order, aromatic = values["order"][within], values["aromatic"][within]
 
     # A bond is the same whichever end comes first.
     low, high = np.sort([first, second], axis=0)
@@ -209,9 +207,9 @@ def struct_conn_category(
     conn = st.atoms.edges.get("struct_conn")
     if conn is None or not len(conn):
         return {}
-    types = conn["type"] if "type" in conn else np.full(len(conn), "")
-    types = np.where(types == "", "covale", types)
-    order = conn["order"] if "order" in conn else np.zeros(len(conn), int)
+    values = filled(conn, type="", order=0)
+    types = np.where(values["type"] == "", "covale", values["type"])
+    order = values["order"]
 
     # Ids number connections within each type, such as disulf1 and disulf2.
     counts: dict[str, int] = {}
