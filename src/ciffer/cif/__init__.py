@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import gzip
+import re
+import uuid
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, overload
@@ -16,6 +18,7 @@ from .category import Category
 from .hierarchy import from_categories, to_categories
 from .metadata import entry_metadata
 from .pdb import pdb_block, pdb_text
+from .rcsb import download_mmcif
 from .writable import unwritten, writable_columns
 
 if TYPE_CHECKING:
@@ -91,15 +94,113 @@ def read(
         biological = ciffer.read("1stp.cif", assembly=True)
 
     """
-    if altloc not in (None, "occupancy", "all"):
-        msg = f"altloc must be None, 'occupancy', or 'all', got {altloc!r}."
-        raise ValueError(msg)
-
     path = Path(path)
     if _file_format(path) == "pdb":
         block = pdb_block(path)
     else:
         block = gemmi.cif.read(str(path)).sole_block()
+    return _from_block(block, model=model, altloc=altloc, assembly=assembly)
+
+
+@overload
+def fetch(
+    pdb_id: str,
+    directory: str | os.PathLike[str] | None = None,
+    *,
+    model: int | None = None,
+    altloc: Literal["occupancy", "all"] | None = None,
+    assembly: bool | int | str = False,
+) -> Structure: ...
+
+
+@overload
+def fetch(
+    pdb_id: str,
+    directory: str | os.PathLike[str] | None = None,
+    *,
+    model: list[int] | Literal["all"],
+    altloc: Literal["occupancy", "all"] | None = None,
+    assembly: bool | int | str = False,
+) -> list[Structure]: ...
+
+
+def fetch(
+    pdb_id: str,
+    directory: str | os.PathLike[str] | None = None,
+    *,
+    model: int | list[int] | Literal["all"] | None = None,
+    altloc: Literal["occupancy", "all"] | None = None,
+    assembly: bool | int | str = False,
+) -> Structure | list[Structure]:
+    """Read an entry of the PDB, downloaded from RCSB as mmCIF.
+
+    Parameters
+    ----------
+    pdb_id: str
+        A 4-character or extended id, such as ``"1stp"`` or ``"pdb_00001stp"``.
+    directory: str | os.PathLike[str] | None, optional
+        Directory to save the file in, as ``1stp.cif`` with the id in lowercase. A file
+        saved there before is read instead of downloading; delete it to download again.
+        None keeps the file in memory only.
+    model, altloc, assembly
+        As in ``read``.
+
+    Returns
+    -------
+    Structure | list[Structure]
+        A list, in the given order, when ``model`` is a list or ``"all"``.
+
+    Raises
+    ------
+    ValueError
+        If the id has characters other than letters, digits, and underscores.
+    FileNotFoundError
+        If RCSB has no entry of the id.
+
+    Examples
+    --------
+    .. code-block:: python
+
+        st = ciffer.fetch("1stp")
+        st = ciffer.fetch("pdb_00001stp", assembly="1")
+        st = ciffer.fetch("1stp", "data")
+
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_]+", pdb_id):
+        msg = f"{pdb_id!r} is not a PDB id."
+        raise ValueError(msg)
+
+    path = None if directory is None else Path(directory) / f"{pdb_id.lower()}.cif"
+    if path is not None and path.exists():
+        return read(path, model=model, altloc=altloc, assembly=assembly)
+
+    data = download_mmcif(pdb_id)
+    # Read before saving, so that a file gemmi cannot read is not kept.
+    block = gemmi.cif.read_string(data).sole_block()
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # A name of its own keeps other processes saving the same entry apart.
+        temporary = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(data)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return _from_block(block, model=model, altloc=altloc, assembly=assembly)
+
+
+def _from_block(
+    block: gemmi.cif.Block,
+    *,
+    model: int | list[int] | Literal["all"] | None,
+    altloc: Literal["occupancy", "all"] | None,
+    assembly: bool | int | str,
+) -> Structure | list[Structure]:
+    """Build the structures that ``read`` returns from an mmCIF block."""
+    if altloc not in (None, "occupancy", "all"):
+        msg = f"altloc must be None, 'occupancy', or 'all', got {altloc!r}."
+        raise ValueError(msg)
+
     site = Category(block, "_atom_site.")
     entity = Category(block, "_entity.")
     entity_poly = Category(block, "_entity_poly.")
