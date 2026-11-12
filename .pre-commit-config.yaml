@@ -19,7 +19,7 @@ repos:
         name: ruff format
         entry: uv run --no-sync ruff format
         language: system
-        types_or: [python, pyi]
+        types_or: [python, pyi, markdown]
         require_serial: true
       - id: ty
         name: ty check
