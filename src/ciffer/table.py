@@ -55,6 +55,12 @@ class Table:
             self[name] = value
 
         self.check_edges()
+        # New lists over the same arrays, so edges of a selected view stop writing the
+        # structure they came from.
+        self.edges = {
+            name: EdgeList(e.src, e.dst, {column: e[column] for column in e.columns})
+            for name, e in self.edges.items()
+        }
 
     @property
     def columns(self) -> list[str]:
@@ -219,13 +225,15 @@ class EdgeList:
         self._src = as_indices(src)
         self._dst = self._check_length("dst", as_indices(dst))
         self._values: dict[str, NDArray[Any]] = {}
+        # The edges and rows that column assignments write instead, as set by select.
+        self._source: tuple[EdgeList, NDArray[np.intp]] | None = None
 
         for name, value in (columns or {}).items():
             self[name] = value
 
     def __setattr__(self, name: str, value: Any) -> None:
         """Refuse new attributes, so that a misspelled field does not pass silently."""
-        in_init = name in ("_src", "_dst", "_values")  # what __init__ sets
+        in_init = name in ("_src", "_dst", "_values", "_source")  # what __init__ sets
         # Fields of subclasses, such as Bond.order, define __set__.
         settable = hasattr(getattr(type(self), name, None), "__set__")
         if not in_init and not settable:
@@ -260,11 +268,30 @@ class EdgeList:
         return name in self._values
 
     def __getitem__(self, name: str) -> NDArray[Any]:
-        """Return the stored array of a value column."""
+        """Return the array of a value column, a copy for edges from ``select``."""
         return self._values[name]
 
     def __setitem__(self, name: str, value: ArrayLike) -> None:
-        """Add or replace a value column."""
+        """Add or replace a value column.
+
+        Edges from ``select`` write the edges they came from instead, and add none.
+        """
+        if self._source is not None:
+            source, rows = self._source
+            if name not in source:
+                msg = (
+                    f"Column {name!r} does not exist; add it on the whole level first."
+                )
+                raise TypeError(msg)
+            column = source[name]
+            dtype = fitting_dtype(column, value)
+            if dtype != column.dtype:
+                column = column.astype(dtype)
+                source[name] = column
+            column[rows] = value
+            self._values[name] = column[rows]
+            return
+
         array = np.asarray(value)
         if array.ndim == 0:
             if name in self._values:
@@ -276,7 +303,30 @@ class EdgeList:
 
     def __delitem__(self, name: str) -> None:
         """Remove a value column."""
+        if self._source is not None:
+            msg = "Delete columns from the edges of a whole level, such as st.atoms."
+            raise TypeError(msg)
         del self._values[name]
+
+    def select(self, rows: ArrayLike, src: ArrayLike, dst: ArrayLike) -> EdgeList:
+        """Return the edges at ``rows`` with new ends, writing assignments back here.
+
+        Its columns are copies, and assigning to one writes the edges at ``rows``, as
+        the columns of a view of selected rows do.
+
+        Examples
+        --------
+        .. code-block:: python
+
+            bond = EdgeList([0, 1], [1, 2], {"order": [1, 1]})
+            second = bond.select([1], [0], [1])  # the edge 1-2, renumbered 0-1
+            second["order"] = 2  # bond["order"] is now [1, 2]
+
+        """
+        rows = as_indices(rows)
+        taken = EdgeList(src, dst, {name: self[name][rows] for name in self.columns})
+        taken._source = (self, rows)
+        return taken
 
     def __repr__(self) -> str:
         """Return the number of edges and the schema of the value columns."""

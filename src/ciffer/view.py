@@ -140,12 +140,23 @@ class View:
     def edges(self) -> dict[str, EdgeList]:
         """Edge groups of the level.
 
-        For a view of selected rows, only edges between those rows are kept, as copies
-        whose ``src`` and ``dst`` index the rows of the view.
+        For a view of selected rows, only edges between those rows are kept, with
+        ``src`` and ``dst`` indexing the rows of the view. Their columns are copies, and
+        assigning to them writes the stored edges, as with the columns of the view.
         """
         if self._indices is None:
             return self.table.edges
-        return self.table.take(self._indices).edges
+        self.table.check_edges()  # edges may have been added after construction
+        # Old row index to view row index: -1 if not selected, the first if repeated.
+        old_to_new = np.full(len(self.table), -1)
+        unique_rows, first = np.unique(self._indices, return_index=True)
+        old_to_new[unique_rows] = first
+        edges = {}
+        for name, stored in self.table.edges.items():
+            src, dst = old_to_new[stored.src], old_to_new[stored.dst]
+            kept = (src >= 0) & (dst >= 0)
+            edges[name] = stored.select(np.flatnonzero(kept), src[kept], dst[kept])
+        return edges
 
     @property
     def atoms(self) -> AtomView:
