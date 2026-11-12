@@ -40,6 +40,8 @@ class Table:
 
     """
 
+    __module__ = "ciffer"
+
     def __init__(
         self,
         columns: Mapping[str, ArrayLike] | None = None,
@@ -83,7 +85,8 @@ class Table:
                 msg = f"Column {name!r} needs an array; the table has no columns yet."
                 raise ValueError(msg)
             if name in self._columns:
-                array = np.full_like(self._columns[name], array)
+                column = self._columns[name]
+                array = np.full(column.shape, array, dtype=fitting_dtype(column, array))
             else:
                 array = np.full(len(self), array)
 
@@ -169,18 +172,12 @@ class Table:
 
     def __repr__(self) -> str:
         """Return the number of rows and the schema."""
-
-        def _describe(column: NDArray[Any]) -> str:
-            if column.ndim == 1:
-                return str(column.dtype)
-            return f"{column.dtype} {column.shape[1:]}"
-
-        width = max((len(name) for name in self.columns), default=0)
-        lines = [f"  {name:<{width}}  {_describe(self[name])}" for name in self.columns]
-
+        lines = _schema({name: self[name] for name in self.columns})
+        if self.edges:
+            lines.append("  edges")
         for name, edges in self.edges.items():
-            fields = "".join(f", {c} {_describe(edges[c])}" for c in edges.columns)
-            lines.append(f"  edges {name} ({len(edges)} rows{fields})")
+            lines.append(f"    {name}  {len(edges)} edges")
+            lines.extend(f"    {line}" for line in repr(edges).splitlines()[1:])
 
         header = f"<{self.__class__.__name__} rows={len(self)}>"
         return "\n".join([header, *lines])
@@ -211,6 +208,8 @@ class EdgeList:
 
     """
 
+    __module__ = "ciffer"
+
     def __init__(
         self,
         src: ArrayLike,
@@ -223,6 +222,19 @@ class EdgeList:
 
         for name, value in (columns or {}).items():
             self[name] = value
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Refuse new attributes, so that a misspelled field does not pass silently."""
+        in_init = name in ("_src", "_dst", "_values")  # what __init__ sets
+        # Fields of subclasses, such as Bond.order, define __set__.
+        settable = hasattr(getattr(type(self), name, None), "__set__")
+        if not in_init and not settable:
+            msg = (
+                f"{type(self).__name__} has no {name!r} field; "
+                f"set other columns with edges[{name!r}] = value."
+            )
+            raise AttributeError(msg)
+        super().__setattr__(name, value)
 
     @property
     def src(self) -> NDArray[np.intp]:
@@ -256,7 +268,8 @@ class EdgeList:
         array = np.asarray(value)
         if array.ndim == 0:
             if name in self._values:
-                array = np.full_like(self._values[name], array)
+                column = self._values[name]
+                array = np.full(column.shape, array, dtype=fitting_dtype(column, array))
             else:
                 array = np.full(len(self), array)
         self._values[name] = self._check_length(name, array)
@@ -266,14 +279,40 @@ class EdgeList:
         del self._values[name]
 
     def __repr__(self) -> str:
-        """Return the number of edges and the value column names."""
-        return f"<EdgeList rows={len(self)} columns={self.columns}>"
+        """Return the number of edges and the schema of the value columns."""
+        lines = _schema({name: self[name] for name in self.columns})
+        return "\n".join([f"<{type(self).__name__} edges={len(self)}>", *lines])
 
     def _check_length(self, name: str, array: NDArray[Any]) -> NDArray[Any]:
         if len(array) != len(self):
             msg = f"{name} has {len(array)} entries, but there are {len(self)} edges."
             raise ValueError(msg)
         return array
+
+
+def fitting_dtype(column: NDArray[Any], value: ArrayLike) -> np.dtype[Any]:
+    """Return the dtype of ``column``, widened if ``value`` would be cut to fit it.
+
+    An array value widens by its dtype, and a scalar by its value. Booleans stay
+    booleans, and numbers never become text, so such values fail as numpy casts them.
+
+    >>> fitting_dtype(np.array(["A", "B"]), "ABC")
+    dtype('<U3')
+    >>> fitting_dtype(np.zeros(2, np.float32), 0)
+    dtype('float32')
+    >>> fitting_dtype(np.zeros(2, np.int64), 1.5)
+    dtype('float64')
+    >>> fitting_dtype(np.zeros(2, bool), 1), fitting_dtype(np.zeros(2), "x")
+    (dtype('bool'), dtype('float64'))
+
+    """
+    dtype = np.promote_types(column.dtype, np.min_scalar_type(np.asarray(value)))
+    numeric = "iufc"
+    if column.dtype.kind == "b" or (
+        column.dtype.kind in numeric and dtype.kind not in numeric
+    ):
+        return column.dtype
+    return dtype
 
 
 def as_indices(value: ArrayLike) -> NDArray[np.intp]:
@@ -286,3 +325,13 @@ def as_indices(value: ArrayLike) -> NDArray[np.intp]:
         msg = f"Expected 1-D integer indices, got {index.ndim}-D {index.dtype}."
         raise TypeError(msg)
     return index.astype(np.intp, copy=False)
+
+
+def _schema(columns: Mapping[str, NDArray[Any]]) -> list[str]:
+    """Return one line per column with its dtype, and its shape after the first axis."""
+    width = max((len(name) for name in columns), default=0)
+    lines = []
+    for name, column in columns.items():
+        shape = f" {column.shape[1:]}" if column.ndim > 1 else ""
+        lines.append(f"  {name:<{width}}  {column.dtype}{shape}")
+    return lines

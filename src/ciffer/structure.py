@@ -7,7 +7,7 @@ import numpy as np
 
 from .serialize import dump_bytes, load_bytes
 from .table import EdgeList, Table, as_indices
-from .view import Level, View
+from .view import AtomView, ChainView, Level, ResidueView
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
 
 FORMAT_VERSION = 1
+REPR_WIDTH = 88
 
 
 class Structure:
@@ -43,9 +44,17 @@ class Structure:
     .. code-block:: python
 
         st = Structure(
-            atoms=Table({"name": ["N", "CA", "C"], "xyz": xyz}),
+            atoms=Table(
+                {"name": ["N", "CA", "C"], "element": ["N", "C", "C"], "xyz": xyz}
+            ),
             residues=Table({"name": ["ALA"]}),
-            chains=Table({"id": ["A"]}),
+            chains=Table(
+                {
+                    "label_asym_id": ["A"],
+                    "entity_type": ["polymer"],
+                    "polymer_type": ["polypeptide(L)"],
+                }
+            ),
             atom_to_residue=[0, 0, 0],
             residue_to_chain=[0],
             metadata={"id": "1abc"},
@@ -54,6 +63,8 @@ class Structure:
         st.atoms[st.atoms["name"] == "CA"]    # a view of selected atoms
 
     """
+
+    __module__ = "ciffer"
 
     def __init__(
         self,
@@ -95,20 +106,27 @@ class Structure:
         )
         self.metadata: dict[str, Any] = metadata if metadata is not None else {}
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Refuse new attributes, so that a misspelled one does not pass silently."""
+        if name not in ("tables", "atom_to_residue", "residue_to_chain", "metadata"):
+            msg = f"Structure has no {name!r} attribute; keep other values in metadata."
+            raise AttributeError(msg)
+        super().__setattr__(name, value)
+
     @property
-    def atoms(self) -> View:
+    def atoms(self) -> AtomView:
         """View of all atoms."""
-        return View(self, Level.ATOM)
+        return AtomView(self)
 
     @property
-    def residues(self) -> View:
+    def residues(self) -> ResidueView:
         """View of all residues."""
-        return View(self, Level.RESIDUE)
+        return ResidueView(self)
 
     @property
-    def chains(self) -> View:
+    def chains(self) -> ChainView:
         """View of all chains."""
-        return View(self, Level.CHAIN)
+        return ChainView(self)
 
     def copy(self) -> Self:
         """Return a deep copy of the structure, including its metadata."""
@@ -200,10 +218,17 @@ class Structure:
         lines = [f"<Structure {counts}>"]
 
         for name, table in tables:
-            lines.append(name)
-            lines.extend(repr(table).splitlines()[1:])  # the schema, without header
+            lines.append(f"  {name}")
+            schema = repr(table).splitlines()[1:]  # without the header
+            lines.extend(f"  {line}" for line in schema)
 
-        lines.append(f"metadata: {', '.join(self.metadata) or '-'}")
+        lines.append("  metadata")
+        width = max((len(key) for key in self.metadata), default=0)
+        for key, value in self.metadata.items():
+            line = f"    {key:<{width}}  {value!r}"
+            if len(line) > REPR_WIDTH:
+                line = line[: REPR_WIDTH - 3] + "..."
+            lines.append(line)
         return "\n".join(lines)
 
 

@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "Howon Lee", email = "hwlee7771@gmail.com" }]
-dependencies = ["numpy>=2.2", "zstandard>=0.25.0"]
+dependencies = ["gemmi>=0.7.5", "numpy>=2.2", "zstandard>=0.25.0"]
 
 [project.urls]
 Repository = "https://github.com/Buddha7771/ciffer"
@@ -28,7 +28,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["ALL"]
-extend-select = ["D417"] # Disabled by the numpy convention; keep Parameters complete
+extend-select = [
+  "D417",
+] # Disabled by the numpy convention; keep Parameters complete
 ignore = [
   "COM812",  # Conflicts with ruff formatter
   "CPY001",  # Missing copyright notice

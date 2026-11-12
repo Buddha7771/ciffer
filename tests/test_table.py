@@ -86,4 +86,5 @@ def test_repr_lists_columns_and_edges(chain: Table):
 
     assert "<Table rows=4>" in text
     assert "xyz   float64 (3,)" in text
-    assert "edges bond (3 rows, order int64)" in text
+    assert "  edges\n    bond  3 edges\n      order  int64" in text
+    assert repr(chain.edges["bond"]) == "<EdgeList edges=3>\n  order  int64"

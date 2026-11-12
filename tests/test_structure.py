@@ -64,17 +64,40 @@ def test_whole_view_reads_stored_array(st: Structure):
     assert st.atoms["xyz"][0].tolist() == [-1.0, -1.0, -1.0]
 
 
-def test_selected_view_reads_copy_and_writes_through(st: Structure):
+def test_selected_view_reads_copies_and_takes_no_assignments(st: Structure):
     selected = st.atoms[[1, 2]]
 
     selected["xyz"][:] = 0.0
     assert st.atoms["xyz"][1].tolist() == [3.0, 4.0, 5.0]
 
-    selected["xyz"] = 0.0
+    message = r"takes no assignments; st\.atoms\['xyz'\]\[view\.indices\] = value"
+    with pytest.raises(TypeError, match=message):
+        selected["xyz"] = 0.0
+    with pytest.raises(TypeError, match="takes no assignments"):
+        selected.xyz = 0.0
+    with pytest.raises(TypeError, match=r"add the column first, .* = value"):
+        selected["b_factor"] = 0.0
+
+    st.atoms["xyz"][selected.indices] = 0.0
     assert st.atoms["xyz"][1].tolist() == [0.0, 0.0, 0.0]
 
-    with pytest.raises(TypeError, match="add it on the whole level first"):
-        selected["b_factor"] = 0.0
+
+def test_assignment_widens_columns(st: Structure):
+    # A longer string or a float among integers widens the column rather than being cut.
+    st.chains["id"] = "ABC"
+    assert st.chains["id"].tolist() == ["ABC", "ABC"]
+    st.atoms.edges["bond"]["order"] = 1.5
+    assert st.atoms.edges["bond"]["order"].tolist() == [1.5, 1.5, 1.5]
+
+    # A value that fits keeps the dtype, booleans stay masks, and numbers stay numbers.
+    st.atoms["b_factor"] = np.zeros(6, np.float32)
+    st.atoms["b_factor"] = 0
+    assert st.atoms["b_factor"].dtype == np.float32
+    st.atoms["hetero"] = np.zeros(6, bool)
+    st.atoms["hetero"] = 1
+    assert st.atoms["hetero"].dtype == bool
+    with pytest.raises(ValueError, match="could not convert"):
+        st.atoms["b_factor"] = "x"
 
 
 def test_add_and_delete_columns(st: Structure):
@@ -89,6 +112,36 @@ def test_add_and_delete_columns(st: Structure):
 
     with pytest.raises(ValueError, match="last column"):
         del st.chains["id"]
+
+
+def test_standard_columns_as_attributes(st: Structure):
+    assert st.atoms.xyz is st.atoms["xyz"]
+    st.atoms.xyz = np.zeros((6, 3))
+    assert st.atoms["xyz"].tolist() == [[0.0, 0.0, 0.0]] * 6
+    assert st.chains[1].residues.name.tolist() == ["ZN"]
+
+    # A missing column raises AttributeError, so hasattr works.
+    assert not hasattr(st.atoms, "b_factor")
+    with pytest.raises(AttributeError, match="no 'label_asym_id' column"):
+        _ = st.chains.label_asym_id
+
+    # Other names are columns only through [], so a misspelled field is not lost.
+    with pytest.raises(AttributeError, match=r"no 'plddt' field; .* view\['plddt'\]"):
+        st.atoms.plddt = 0.0
+    with pytest.raises(AttributeError, match="no 'metdata' attribute"):
+        st.metdata = {}
+
+
+def test_standard_edges_as_attributes(st: Structure):
+    st.atoms.bond.order[0] = 3
+    assert st.atoms.edges["bond"]["order"].tolist() == [3, 1, 2]
+
+    bond = st.atoms[[4, 3, 0]].bond
+    assert list(zip(bond.src, bond.dst, strict=True)) == [(1, 0)]
+    assert not hasattr(st.atoms, "struct_conn")
+
+    with pytest.raises(AttributeError, match=r"no 'ordr' field; .* edges\['ordr'\]"):
+        st.atoms.bond.ordr = 2
 
 
 def test_level_conversion_uses_stored_order(st: Structure):
@@ -170,7 +223,7 @@ def test_bytes_roundtrip(st: Structure):
 
     back = Structure.from_bytes(st.to_bytes())
 
-    assert repr(back) == repr(st)
+    assert [repr(t) for t in back.tables] == [repr(t) for t in st.tables]
     assert back.atoms["name"].tolist() == st.atoms["name"].tolist()
     assert np.array_equal(back.atoms["xyz"], st.atoms["xyz"])
     assert back.atom_to_residue.tolist() == st.atom_to_residue.tolist()
@@ -190,4 +243,14 @@ def test_repr_shows_schema(st: Structure):
     text = repr(st)
 
     assert "<Structure atoms=6 residues=3 chains=2>" in text
-    assert "metadata: id" in text
+    assert "    id  '1abc'" in text
+
+
+def test_view_repr_shows_columns_and_edges(st: Structure):
+    assert repr(st.atoms).startswith("<AtomView atoms=6>\n  name")
+    assert "    bond  3 edges" in repr(st.atoms)
+    assert repr(st.atoms.bond).startswith("<Bond edges=3>")
+
+    # Only the edges between the selected rows are counted.
+    assert repr(st.atoms[:2]).startswith("<AtomView atoms=2 of 6>")
+    assert "    bond  1 edges" in repr(st.atoms[:2])
