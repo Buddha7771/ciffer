@@ -372,9 +372,8 @@ def test_write_metadata(tmp_path: Path):
 
 def test_write_pdb(tmp_path: Path):
     st = ciffer.read(DATA / "4DWA.cif.gz")
-    with pytest.warns(
-        UserWarning, match=r"atoms.edges\['bond'\], metadata\['authors'\]"
-    ):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # what PDB files cannot hold goes unwarned
         ciffer.write(st, tmp_path / "out.pdb")
     back = ciffer.read(tmp_path / "out.pdb")
     assert back.metadata["resolution"] == st.metadata["resolution"]  # REMARK 2
@@ -398,18 +397,17 @@ def test_write_pdb(tmp_path: Path):
     assert len(back.atoms.struct_conn) == len(st.atoms.struct_conn)
     assert "CRYST1" not in (tmp_path / "out.pdb").read_text()
 
-    st.atoms.struct_conn.type[0] = "hydrog"
-    st.metadata["id"] = "DESIGN1"
-    with pytest.warns(UserWarning, match="Not written") as record:
+    st.atoms["plddt"] = 0.0
+    with pytest.warns(UserWarning, match=r"Not written: atoms\['plddt'\]\.$"):
         ciffer.write(st, tmp_path / "out.pdb")
-    message = str(record[0].message)
-    assert "chains['description'], 1 hydrogen bonds in struct_conn" in message
-    assert message.endswith("metadata['id'].")
 
+
+def test_write_pdb_names(tmp_path: Path):
     # Assembly copies keep two-letter chain names, and long residue names come back.
     st = ciffer.read(DATA / "1G2J.cif.gz", assembly=True)
     st.residues.name = np.where(st.residues.name == "PYY", "A1LIG", st.residues.name)
-    with pytest.warns(UserWarning, match="Not written"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         ciffer.write(st, tmp_path / "out.ent.gz")
     back = ciffer.read(tmp_path / "out.ent.gz")
     assert sorted(set(back.chains.auth_asym_id.tolist())) == ["A1", "A2"]

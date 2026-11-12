@@ -28,11 +28,6 @@ if TYPE_CHECKING:
 
 REQUIRED = {"atoms": ["name", "element", "xyz"], "residues": ["name"]}
 WRITTEN_EDGES = {("atoms", "bond"): Bond, ("atoms", "struct_conn"): StructConn}
-# PDB files hold struct_conn as LINK and SSBOND records, and no bonds.
-PDB_EDGES = {("atoms", "struct_conn"): StructConn}
-# Entry metadata a PDB file keeps; its HEADER holds an id of up to four letters.
-PDB_ENTRY_KEYS = ENTRY_KEYS - {"authors", "r_free", "release_date", "doi"}
-PDB_ID_LENGTH = 4
 # Metadata that read sets, written in _atom_site or not at all.
 READ_KEYS = {"model", "models", "assembly", "assemblies"}
 # The values of _entity.type.
@@ -441,17 +436,14 @@ def _one_letter(names: NDArray[np.str_], polymer_type: str) -> tuple[str, str]:
     return code, canonical
 
 
-def unwritten(st: Structure, *, pdb: bool = False) -> list[str]:
-    """Name what ``st`` holds that the file cannot.
+def unwritten(st: Structure) -> list[str]:
+    """Name what ``st`` holds that an mmCIF file cannot.
 
     Those are columns that are not standard fields, edge groups other than ``bond`` and
     ``struct_conn``, bonds between residues, residues with no atoms outside polymer
     sequences, and metadata keys that ``read`` does not set. Standard columns are the
-    Fields of each class, such as ``AtomView.xyz`` and ``Bond.order``. A PDB file also
-    cannot hold ``bond`` or the metadata ``authors``, ``r_free``, ``release_date``, and
-    ``doi``, nor what ``_pdb_losses`` names.
+    Fields of each class, such as ``AtomView.xyz`` and ``Bond.order``.
     """
-    written_edges = PDB_EDGES if pdb else WRITTEN_EDGES
     _, residues, chains = _filled_tables(st)
     observed = np.bincount(st.atom_to_residue, minlength=len(st.residues)) > 0
     lost = int((~observed & ~_in_sequence(st, residues, chains)).sum())
@@ -466,7 +458,7 @@ def unwritten(st: Structure, *, pdb: bool = False) -> list[str]:
         for name, edges in view.edges.items():
             if not len(edges):
                 continue
-            kind = written_edges.get((level, name))
+            kind = WRITTEN_EDGES.get((level, name))
             if kind is None:
                 names.append(f"{level}.edges[{name!r}]")
                 continue
@@ -478,36 +470,13 @@ def unwritten(st: Structure, *, pdb: bool = False) -> list[str]:
 
     # _chem_comp_bond lists bonds by residue type, so it cannot hold these.
     bond = st.atoms.edges.get("bond")
-    if bond is not None and not pdb:
+    if bond is not None:
         a2r = st.atom_to_residue
         between = int((a2r[bond.src] != a2r[bond.dst]).sum())
         names += [f"{between} bonds between residues"] if between else []
 
-    known = (PDB_ENTRY_KEYS if pdb else ENTRY_KEYS) | READ_KEYS
+    known = ENTRY_KEYS | READ_KEYS
     names += [f"metadata[{key!r}]" for key in st.metadata if key not in known]
-    return names + _pdb_losses(st) if pdb else names
-
-
-def _pdb_losses(st: Structure) -> list[str]:
-    """Name what a PDB file loses beyond what an mmCIF file does.
-
-    Those are chain descriptions, hydrogen bonds and orders of ``struct_conn``, an id
-    longer than four letters, and a model number other than 1.
-    """
-    names = []
-    if "description" in st.chains and (st.chains.description != "").any():
-        names.append("chains['description']")
-    conn = st.atoms.edges.get("struct_conn")
-    if conn is not None and "type" in conn:
-        hydrog = int((conn["type"] == "hydrog").sum())
-        names += [f"{hydrog} hydrogen bonds in struct_conn"] if hydrog else []
-    if conn is not None and "order" in conn and (conn["order"] != 0).any():
-        names.append("atoms.edges['struct_conn']['order']")
-    if len(str(st.metadata.get("id", ""))) > PDB_ID_LENGTH:
-        names.append("metadata['id']")
-    # A file of one model has no MODEL record, so it reads back as model 1.
-    if st.metadata.get("model", 1) != 1:
-        names.append("metadata['model']")
     return names
 
 
