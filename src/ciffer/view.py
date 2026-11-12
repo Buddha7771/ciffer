@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar, overload
 
 import numpy as np
 
-from .table import EdgeList, as_indices, fitting_dtype
+from .table import EdgeList, as_indices
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -75,9 +75,10 @@ class Level(IntEnum):
 class View:
     """A selection of atoms, residues, or chains of a structure.
 
-    A view of a whole level, such as ``st.atoms``, reads and writes the stored
-    arrays. A view of selected rows, such as ``st.atoms[idx]``, reads copies, and
-    assigning to its columns writes the selected rows of the stored arrays.
+    A view of a whole level, such as ``st.atoms``, reads and writes the stored arrays.
+    A view of selected rows, such as ``st.atoms[idx]``, reads copies; write its rows
+    through the whole level, as in the example. Such writes keep the dtype of the column
+    and cut longer text, so replace the whole column to write longer text.
 
     Parameters
     ----------
@@ -91,11 +92,13 @@ class View:
     .. code-block:: python
 
         atoms = st.atoms
-        ca = atoms[atoms["name"] == "CA"]
-        ca["xyz"]                # a copy
-        ca["xyz"] = 0.0          # writes into st
-        ca.residues              # residues that contain these atoms
-        ca.extract()             # a new structure
+        is_ca = atoms["name"] == "CA"
+        ca = atoms[is_ca]
+        ca["xyz"]                       # a copy
+        atoms["xyz"][ca.indices] = 0.0  # writes into st
+        atoms["name"] = np.where(is_ca, "CA1X", atoms["name"])  # fits longer text
+        ca.residues                     # residues that contain these atoms
+        ca.extract()                    # a new structure
 
     """
 
@@ -141,7 +144,8 @@ class View:
         """Edge groups of the level.
 
         For a view of selected rows, only edges between those rows are kept, as copies
-        whose ``src`` and ``dst`` index the rows of the view.
+        whose ``src`` and ``dst`` index the rows of the view. Edges are changed through
+        the whole level, such as ``st.atoms.bond.order[mask] = 1``.
         """
         if self._indices is None:
             return self.table.edges
@@ -214,19 +218,15 @@ class View:
         return self.__class__(self.structure, indices)
 
     def __setitem__(self, name: str, value: ArrayLike) -> None:
-        """Set a whole column, or the selected rows of an existing column."""
-        if self._indices is None:
-            self.table[name] = value
-        elif name in self.table:
-            column = self.table[name]
-            dtype = fitting_dtype(column, value)
-            if dtype != column.dtype:
-                column = column.astype(dtype)
-                self.table[name] = column
-            column[self._indices] = value
-        else:
-            msg = f"Column {name!r} does not exist; add it on the whole level first."
+        """Add or replace a column. Only a view of a whole level can do this."""
+        if self._indices is not None:
+            level = f"st.{self.level.name.lower()}s"
+            how = f"{level}[{name!r}][view.indices] = value"
+            if name not in self.table:
+                how = f"add the column first, such as {level}[{name!r}] = value"
+            msg = f"A view of selected rows takes no assignments; {how}."
             raise TypeError(msg)
+        self.table[name] = value
 
     def __delitem__(self, name: str) -> None:
         """Remove a column. Only a view of a whole level can do this."""

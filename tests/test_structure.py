@@ -64,25 +64,28 @@ def test_whole_view_reads_stored_array(st: Structure):
     assert st.atoms["xyz"][0].tolist() == [-1.0, -1.0, -1.0]
 
 
-def test_selected_view_reads_copy_and_writes_through(st: Structure):
+def test_selected_view_reads_copies_and_takes_no_assignments(st: Structure):
     selected = st.atoms[[1, 2]]
 
     selected["xyz"][:] = 0.0
     assert st.atoms["xyz"][1].tolist() == [3.0, 4.0, 5.0]
 
-    selected["xyz"] = 0.0
-    assert st.atoms["xyz"][1].tolist() == [0.0, 0.0, 0.0]
-
-    with pytest.raises(TypeError, match="add it on the whole level first"):
+    message = r"takes no assignments; st\.atoms\['xyz'\]\[view\.indices\] = value"
+    with pytest.raises(TypeError, match=message):
+        selected["xyz"] = 0.0
+    with pytest.raises(TypeError, match="takes no assignments"):
+        selected.xyz = 0.0
+    with pytest.raises(TypeError, match=r"add the column first, .* = value"):
         selected["b_factor"] = 0.0
+
+    st.atoms["xyz"][selected.indices] = 0.0
+    assert st.atoms["xyz"][1].tolist() == [0.0, 0.0, 0.0]
 
 
 def test_assignment_widens_columns(st: Structure):
     # A longer string or a float among integers widens the column rather than being cut.
     st.chains["id"] = "ABC"
     assert st.chains["id"].tolist() == ["ABC", "ABC"]
-    st.residues[[2]]["name"] = "A1LIG"
-    assert st.residues["name"].tolist() == ["ALA", "GLY", "A1LIG"]
     st.atoms.edges["bond"]["order"] = 1.5
     assert st.atoms.edges["bond"]["order"].tolist() == [1.5, 1.5, 1.5]
 
@@ -91,10 +94,10 @@ def test_assignment_widens_columns(st: Structure):
     st.atoms["b_factor"] = 0
     assert st.atoms["b_factor"].dtype == np.float32
     st.atoms["hetero"] = np.zeros(6, bool)
-    st.atoms[[0]]["hetero"] = 1
+    st.atoms["hetero"] = 1
     assert st.atoms["hetero"].dtype == bool
     with pytest.raises(ValueError, match="could not convert"):
-        st.atoms[[0]]["b_factor"] = "x"
+        st.atoms["b_factor"] = "x"
 
 
 def test_add_and_delete_columns(st: Structure):
@@ -113,8 +116,8 @@ def test_add_and_delete_columns(st: Structure):
 
 def test_standard_columns_as_attributes(st: Structure):
     assert st.atoms.xyz is st.atoms["xyz"]
-    st.atoms[[0]].xyz = -1.0
-    assert st.atoms.xyz[0].tolist() == [-1.0, -1.0, -1.0]
+    st.atoms.xyz = np.zeros((6, 3))
+    assert st.atoms["xyz"].tolist() == [[0.0, 0.0, 0.0]] * 6
     assert st.chains[1].residues.name.tolist() == ["ZN"]
 
     # A missing column raises AttributeError, so hasattr works.
