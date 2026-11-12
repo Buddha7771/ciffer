@@ -176,7 +176,9 @@ def write(st: Structure, path: str | os.PathLike[str]) -> None:
     macrolide chains. Missing ``label_seq_id`` numbers each polymer from 1, and an
     entity whose chains do not each run from 1 to the same end without gaps, as after
     cropping, is written without its sequence. Readers may give no bonds to residue
-    types that ``bond`` leaves out, so give bonds for every residue or for none.
+    types that ``bond`` leaves out, so give bonds for every residue or for none. Chains
+    sharing an ``entity_id`` but holding other molecules, as after ``concat``, are
+    written as separate entities.
 
     A PDB file loses, without a warning, bonds, chain descriptions, hydrogen bonds,
     connection orders, and the metadata ``authors``, ``r_free``, ``release_date``, and

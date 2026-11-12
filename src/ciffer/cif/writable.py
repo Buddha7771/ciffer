@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from typing import TYPE_CHECKING
 
 import gemmi
@@ -92,6 +93,7 @@ def writable_columns(st: Structure) -> tuple[Columns, Columns, Columns]:
     # auth_seq_id follows label_seq_id, so it is filled after it.
     seq = residues["label_seq_id"]
     residues |= filled(st.residues, auth_seq_id=np.where(seq > 0, seq, place))
+    chains["entity_id"] = _separate_entities(st, residues, chains)
 
     atoms = {
         "name": st.atoms.name,
@@ -132,7 +134,10 @@ def _check_structure(st: Structure) -> None:
     if "label_asym_id" in st.chains:
         labels, counts = np.unique(st.chains.label_asym_id, return_counts=True)
         if (counts > 1).any():
-            msg = f"Chains share label_asym_id {labels[counts > 1].tolist()}."
+            msg = (
+                f"Chains share label_asym_id {labels[counts > 1].tolist()}; give each "
+                'its own, or del st.chains["label_asym_id"] to name them A, B, C.'
+            )
             raise ValueError(msg)
 
 
@@ -150,6 +155,62 @@ def _check_types(chains: Columns) -> None:
             f"polymer_type, one of {sorted(POLYMER_TYPES)}."
         )
         raise ValueError(msg)
+
+
+def _separate_entities(
+    st: Structure, residues: Columns, chains: Columns
+) -> NDArray[np.str_]:
+    """Return entity_id, with new ids for chains that share one but differ.
+
+    Chains differ when their entity_type, polymer_type, or description differ, when
+    polymers hold other residues at one label_seq_id, or when non-polymer chains hold
+    other residue types. Polymers that only end at other positions stay one entity. The
+    first chain of each molecule keeps the id, and the others take the lowest free
+    positive integer.
+    """
+    polymer = (chains["entity_type"] == "polymer").tolist()
+    held: list[dict[int, str]] = [{} for _ in polymer]  # first residue at each position
+    types: list[set[str]] = [set() for _ in polymer]
+    for chain, name, position in zip(
+        st.residue_to_chain.tolist(),
+        residues["name"].tolist(),
+        residues["label_seq_id"].tolist(),
+        strict=True,
+    ):
+        if not polymer[chain]:
+            types[chain].add(name)
+        elif position > 0:
+            held[chain].setdefault(position, name)
+    kinds = list(
+        zip(
+            chains["entity_type"].tolist(),
+            chains["polymer_type"].tolist(),
+            chains["description"].tolist(),
+            map(frozenset, types),
+            strict=True,
+        )
+    )
+
+    given = chains["entity_id"].astype(str).tolist()
+    used = set(given)
+    molecules: dict[str, list[tuple[object, dict[int, str], str]]] = {}
+    ids = []
+    for kind, contents, entity_id in zip(kinds, held, given, strict=True):
+        seen = molecules.setdefault(entity_id, [])
+        for seen_kind, seen_contents, seen_id in seen:
+            agree = all(seen_contents.get(p, v) == v for p, v in contents.items())
+            if seen_kind == kind and agree:
+                seen_contents.update(contents)  # so later chains meet every position
+                ids.append(seen_id)
+                break
+        else:
+            new_id = entity_id
+            if seen:
+                new_id = next(str(n) for n in itertools.count(1) if str(n) not in used)
+                used.add(new_id)
+            seen.append((kind, contents, new_id))
+            ids.append(new_id)
+    return np.array(ids)
 
 
 def _inferred_types(st: Structure) -> tuple[NDArray[np.str_], NDArray[np.str_]]:

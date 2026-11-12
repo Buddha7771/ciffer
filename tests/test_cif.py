@@ -496,8 +496,6 @@ def test_write_checks_inputs(tmp_path: Path):
 
     with pytest.raises(ValueError, match=r"not a \.cif, \.mmcif, \.pdb, or \.ent file"):
         ciffer.write(st, tmp_path / "out.txt")
-    with pytest.raises(ValueError, match=r"share label_asym_id \['A', 'B'"):
-        ciffer.write(ciffer.concat([st, st]), tmp_path / "out.cif")
 
     with pytest.raises(ValueError, match="no atoms"):
         ciffer.write(st.atoms[st.atoms.name == "XX"].extract(), tmp_path / "out.cif")
@@ -543,6 +541,41 @@ def test_write_checks_inputs(tmp_path: Path):
     del st.atoms["element"]
     with pytest.raises(ValueError, match=r"without \['atoms.element'\]"):
         ciffer.write(st, tmp_path / "out.cif")
+
+
+def test_write_concatenated(tmp_path: Path):
+    rna = ciffer.read(DATA / "1G2J.cif.gz")  # entities 1, 2, 2, 3
+    protein = ciffer.read(DATA / "1STP.cif.gz")  # entities 1, 2, 3
+    both = ciffer.concat([rna, protein, protein])
+    with pytest.raises(ValueError, match=r"share label_asym_id \['A', 'B', 'C'\]"):
+        ciffer.write(both, tmp_path / "out.cif")
+
+    del both.chains["label_asym_id"]
+    ciffer.write(both, tmp_path / "out.cif")
+    back = ciffer.read(tmp_path / "out.cif")
+
+    # The protein and biotin take new ids; waters and copies of one molecule share one.
+    assert back.chains.entity_id.tolist() == [
+        *("1", "2", "2", "3"),
+        *("4", "5", "3"),
+        *("4", "5", "3"),
+    ]
+    assert back.chains.description.tolist() == both.chains.description.tolist()
+    polymer = back.residues[back.residue_to_chain == 4]
+    assert polymer.label_seq_id.tolist() == list(range(1, 160))
+
+    # A copy with another residue at one position is another molecule, and a copy that
+    # only lacks its end is not; ids given as integers are separated alike.
+    protein.chains.entity_id = np.arange(1, 4)
+    mutant = protein.copy()
+    mutant.residues.name[mutant.residues.label_seq_id == 20] = "ALA"
+    short = protein.residues[protein.residues.label_seq_id != 159].extract()
+    both = ciffer.concat([protein, mutant, short])
+    del both.chains["label_asym_id"]
+    with pytest.warns(UserWarning, match="residues with no atoms"):
+        ciffer.write(both, tmp_path / "out.cif")
+    entity_id = ciffer.read(tmp_path / "out.cif").chains.entity_id
+    assert entity_id.tolist() == [*("1", "2", "3"), *("4", "2", "3"), *("1", "2", "3")]
 
 
 def test_write_warns_what_the_file_cannot_hold(tmp_path: Path):
