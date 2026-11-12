@@ -152,6 +152,8 @@ def fetch(
 
     Raises
     ------
+    ValueError
+        If the id has characters other than letters, digits, and underscores.
     FileNotFoundError
         If RCSB has no entry of the id.
 

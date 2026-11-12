@@ -364,25 +364,40 @@ def test_fetch_saves_and_reuses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     requests = fake_rcsb(monkeypatch)
     directory = tmp_path / "data"
 
-    # The file is saved even when the options fail, so a retry reads it.
-    with pytest.raises(ValueError, match="models are"):
-        ciffer.fetch("1STP", directory, model=9)
-    st = ciffer.fetch("1STP", directory, assembly="1")
+    downloaded = ciffer.fetch("1STP", directory, assembly="1")
+    reused = ciffer.fetch("1STP", directory, assembly="1")
 
     assert len(requests) == 1
     assert [p.name for p in directory.iterdir()] == ["1stp.cif"]
     plain = gzip.decompress((DATA / "1STP.cif.gz").read_bytes())
     assert (directory / "1stp.cif").read_bytes() == plain
-    expected = ciffer.read(DATA / "1STP.cif.gz", assembly="1")
-    assert ciffer_atoms(st) == ciffer_atoms(expected)
+    expected = ciffer_atoms(ciffer.read(DATA / "1STP.cif.gz", assembly="1"))
+    assert ciffer_atoms(downloaded) == ciffer_atoms(reused) == expected
+
+    # The file is saved even when the options fail, so a retry reads it.
+    with pytest.raises(ValueError, match="models are"):
+        ciffer.fetch("1STP", tmp_path / "other", model=9)
+    assert (tmp_path / "other" / "1stp.cif").read_bytes() == plain
 
 
-def test_fetch_errors(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ("status", "error", "message"),
+    [
+        (404, FileNotFoundError, "No entry '0abc' at RCSB"),
+        (500, urllib.error.HTTPError, "HTTP Error 500"),
+    ],
+)
+def test_fetch_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    error: type[Exception],
+    message: str,
+):
     def urlopen(request: urllib.request.Request, **_: float) -> io.BytesIO:
-        raise urllib.error.HTTPError(request.full_url, 404, "", Message(), None)
+        raise urllib.error.HTTPError(request.full_url, status, "", Message(), None)
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    with pytest.raises(FileNotFoundError, match="No entry '0abc' at RCSB"):
+    with pytest.raises(error, match=message):
         ciffer.fetch("0abc")
     with pytest.raises(ValueError, match="is not a PDB id"):
         ciffer.fetch("../1stp")
