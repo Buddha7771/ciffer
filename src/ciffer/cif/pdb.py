@@ -34,6 +34,20 @@ def pdb_block(path: Path) -> gemmi.cif.Block:
     for entity in pdb.entities:
         entity.subchains = [names[name] for name in entity.subchains]
     pdb.assign_label_seq_id()
+    # Polymers without SEQRES are numbered in the order of the file, without gaps, so
+    # their sequence can be written; residues at one position share a number.
+    unsequenced = {
+        name
+        for entity in pdb.entities
+        if entity.entity_type == gemmi.EntityType.Polymer and not entity.full_sequence
+        for name in entity.subchains
+    }
+    for model in pdb:
+        numbers: dict[str, dict[str, int]] = {}
+        for res in (res for chain in model for res in chain):
+            if res.subchain in unsequenced:
+                positions = numbers.setdefault(res.subchain, {})
+                res.label_seq = positions.setdefault(str(res.seqid), len(positions) + 1)
     block = pdb.make_mmcif_document().sole_block()
     # gemmi reads the resolution of REMARK 2 but writes it only with REMARK 3.
     if pdb.resolution and not len(block.find_values("_refine.ls_d_res_high")):

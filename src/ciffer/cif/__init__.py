@@ -54,7 +54,7 @@ def read(
     A PDB file is read as gemmi converts it to mmCIF, so it has no residues without
     atoms and no bonds within residues. Its chains get label ids A, B, ..., Z, AA, BA,
     and so on, in the order of the file. Without SEQRES records, its polymer residues
-    have a label_seq_id of -1.
+    are numbered from 1 in the order of the file.
 
     Parameters
     ----------

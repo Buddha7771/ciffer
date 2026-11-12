@@ -1,3 +1,4 @@
+import gzip
 import warnings
 from pathlib import Path
 from typing import Any
@@ -240,6 +241,30 @@ def test_read_pdb_format():
 
     with pytest.raises(ValueError, match="optionally gzipped"):
         ciffer.read(DATA / "1STP.txt")
+
+
+def test_read_pdb_without_seqres(tmp_path: Path):
+    # Residues 50 to 54 are dropped as well, breaking the chain.
+    with gzip.open(DATA / "1STP.pdb.gz", "rt") as file:
+        lines = [
+            line
+            for line in file
+            if not line.startswith("SEQRES")
+            and not (line.startswith("ATOM") and 50 <= int(line[22:26]) <= 54)
+        ]
+    (tmp_path / "design.pdb").write_text("".join(lines))
+
+    st = ciffer.read(tmp_path / "design.pdb")
+
+    # Numbers go from 1 in the order of the file, as no sequence tells them.
+    polymer = st.residues[st.residue_to_chain == 0]
+    assert polymer.label_seq_id.tolist() == list(range(1, len(polymer) + 1))
+    assert polymer.auth_seq_id[36:38].tolist() == ["49", "55"]
+
+    # The sequence is written from the residues, and readers find all of it.
+    ciffer.write(st, tmp_path / "design.cif")
+    back = gemmi.read_structure(str(tmp_path / "design.cif"))
+    assert len(back.entities[0].full_sequence) == len(polymer)
 
 
 def test_read_all_models():
@@ -587,7 +612,6 @@ def test_write_names_chains_past_z(tmp_path: Path):
 
 
 def test_write_polymer_without_sequence_positions(tmp_path: Path):
-    # As from a PDB file without SEQRES records.
     st = ciffer.read(DATA / "1G2J.cif.gz")
     st.residues.label_seq_id = -1
     ciffer.write(st, tmp_path / "out.cif")
