@@ -91,15 +91,26 @@ def read(
         biological = ciffer.read("1stp.cif", assembly=True)
 
     """
-    if altloc not in (None, "occupancy", "all"):
-        msg = f"altloc must be None, 'occupancy', or 'all', got {altloc!r}."
-        raise ValueError(msg)
-
     path = Path(path)
     if _file_format(path) == "pdb":
         block = pdb_block(path)
     else:
         block = gemmi.cif.read(str(path)).sole_block()
+    return _from_block(block, model=model, altloc=altloc, assembly=assembly)
+
+
+def _from_block(
+    block: gemmi.cif.Block,
+    *,
+    model: int | list[int] | Literal["all"] | None,
+    altloc: Literal["occupancy", "all"] | None,
+    assembly: bool | int | str,
+) -> Structure | list[Structure]:
+    """Build the structures that ``read`` returns from an mmCIF block."""
+    if altloc not in (None, "occupancy", "all"):
+        msg = f"altloc must be None, 'occupancy', or 'all', got {altloc!r}."
+        raise ValueError(msg)
+
     site = Category(block, "_atom_site.")
     entity = Category(block, "_entity.")
     entity_poly = Category(block, "_entity_poly.")
