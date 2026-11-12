@@ -28,20 +28,20 @@ import ciffer
 
 st = ciffer.fetch("1stp", assembly=True)  # from RCSB, as the biological tetramer
 
-st.atoms.name[:4]              # ['N', 'CA', 'C', 'O']
-st.atoms.xyz.shape             # (4004, 3)
-len(st.atoms.bond)             # 3280
+st.atoms.name[:4]  # ['N', 'CA', 'C', 'O']
+st.atoms.xyz.shape  # (4004, 3)
+len(st.atoms.bond)  # 3280
 
-st.residues.name[:4]           # ['ASP', 'PRO', 'SER', 'LYS']
-st.residues.label_seq_id[:4]   # [1, 2, 3, 4]
+st.residues.name[:4]  # ['ASP', 'PRO', 'SER', 'LYS']
+st.residues.label_seq_id[:4]  # [1, 2, 3, 4]
 
-st.chains.label_asym_id[:3]    # ['A1', 'B1', 'C1']
-st.chains.entity_type[:3]      # ['polymer', 'non-polymer', 'water']
+st.chains.label_asym_id[:3]  # ['A1', 'B1', 'C1']
+st.chains.entity_type[:3]  # ['polymer', 'non-polymer', 'water']
 
-st.metadata["resolution"]      # 2.6
-st.metadata["release_date"]    # '1992-10-15'
+st.metadata["resolution"]  # 2.6
+st.metadata["release_date"]  # '1992-10-15'
 
-st                             # prints every column, edge, and metadata key
+st  # prints every column, edge, and metadata key
 ```
 
 <details>
@@ -98,9 +98,9 @@ st                             # prints every column, edge, and metadata key
 
 ```python
 ensemble = ciffer.fetch("1l2y", directory="data", model="all")  # cached in data/
-len(ensemble)                                                    # 38
+len(ensemble)  # 38
 ciffer.write(ensemble[0], "trp_cage.pdb.gz")
-ciffer.read("trp_cage.pdb.gz").atoms.xyz.shape                   # (304, 3)
+ciffer.read("trp_cage.pdb.gz").atoms.xyz.shape  # (304, 3)
 ```
 
 `read` takes `.cif`, `.mmcif`, `.pdb`, and `.ent`, gzipped or not. `fetch` also takes extended ids such as `pdb_00001stp`. Both accept `model`, `altloc`, and `assembly`.
@@ -116,8 +116,8 @@ biotin = st.residues[st.residues.name == "BTN"].atoms
 protein = st.chains[st.chains.entity_type == "polymer"].atoms
 distance = np.linalg.norm(protein.xyz[:, None] - biotin.xyz, axis=-1).min(axis=1)
 pocket = protein[distance < 5].residues
-pocket.name                  # ['ASN', 'LEU', 'SER', 'TYR', 'SER', 'VAL', ...]
-pocket.chains.auth_asym_id   # ['A1', 'A2', 'A3', 'A4']
+pocket.name  # ['ASN', 'LEU', 'SER', 'TYR', 'SER', 'VAL', ...]
+pocket.chains.auth_asym_id  # ['A1', 'A2', 'A3', 'A4']
 ciffer.write(pocket.extract(), "pocket.cif")
 ```
 
@@ -128,9 +128,9 @@ Add your own column with `[]`, select with it, and edit through the whole level:
 ```python
 st.atoms["pocket"] = np.isin(st.atoms.indices, pocket.atoms.indices)
 ca = st.atoms[st.atoms.name == "CA"]
-len(ca[ca["pocket"]])                         # 72
+len(ca[ca["pocket"]])  # 72
 noise = np.random.default_rng(0).normal(scale=0.5, size=(len(pocket.atoms), 3))
-st.atoms.xyz[pocket.atoms.indices] += noise   # writes into the structure
+st.atoms.xyz[pocket.atoms.indices] += noise  # writes into the structure
 # A selection such as `ca` holds copies, so `ca.xyz += 1` raises a TypeError.
 ```
 
@@ -148,9 +148,9 @@ db.commit()
 
 (data,) = db.execute("SELECT data FROM structures WHERE id = '1stp'").fetchone()
 st = ciffer.Structure.from_bytes(data)
-int(st.atoms["pocket"].sum())   # 616
-len(st.atoms.bond)              # 3280
-st.metadata["resolution"]       # 2.6
+int(st.atoms["pocket"].sum())  # 616
+len(st.atoms.bond)  # 3280
+st.metadata["resolution"]  # 2.6
 ```
 
 Your column, the bonds, and the metadata all come back.
